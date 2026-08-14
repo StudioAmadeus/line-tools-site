@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Restaurant prep list — Line Tools</title>
+<meta name="description" content="Type your batch items with build-tos and batch sizes, count what's on hand, and print what to make — as a multiplier of the batch recipe. No account — your list stays on your device.">
+<!-- ==================================================================
+     The prep tool (6.2, SPEC §9): batch-made items, counted daily.
+     ONE list per kitchen — the first tool with no tabs. Two screens:
+     the list editor (name · unit · build-to · 1x) and the daily count
+     entry (keyboard-first, blank means zero). The only math is
+     RSRender.prepMake: shortfall ÷ batch size to the nearest quarter.
+     Counts are EPHEMERAL — today's draft only, overwritten next time,
+     never accumulated (a count history is an audit trail, and that is
+     BOIL — §10). 80 items is the max; the editor holds that line at
+     the door, and item names cap at 22 letters so nothing on a sheet
+     ever wraps (6.1 round four).
+
+     File name is the builder's placeholder — naming is Adam's.
+     Dev hook: window.PREP_BACKUP, same shape as the others, plus an
+     optional counts map keyed by item id.
+     ================================================================== -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/print.css">
+<style>
+  /* editable row grid: handle · item · unit · build-to · 1x · controls */
+  .app { --cols: 1.2em minmax(0, 1.5fr) 3.2em 4em 4em auto; }
+  .drag-handle {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--steel-s); cursor: grab; font-size: 13px;
+    -webkit-user-select: none; user-select: none;
+  }
+  .row.dragging { opacity: 0.4; }
+  .row.drop-before { box-shadow: 0 -3px 0 0 var(--ink-s); }
+  .row.drop-after  { box-shadow: 0 3px 0 0 var(--ink-s); }
+  .danger-btn { color: var(--warn); }
+  .controls .icon-btn { padding: 10px 12px; font-size: 16px; line-height: 1; }
+  .controls .grp-btn { font-size: 13px; white-space: nowrap; }
+  @media (max-width: 560px) {
+    .row {
+      --cols-narrow: 1fr 1fr 1fr auto;
+      --areas-narrow: "n n n c" "u b s c";
+    }
+    .row .f-name { grid-area: n; }
+    .row .f-unit { grid-area: u; }
+    .row .f-bto  { grid-area: b; }
+    .row .f-bs   { grid-area: s; }
+    .row .controls { grid-area: c; flex-direction: column; }
+    .drag-handle, .ins-btn { display: none; }
+  }
+
+  .undo {
+    position: fixed; bottom: 12px; left: 12px; right: 12px;
+    max-width: 736px; margin: 0 auto;
+    background: var(--ink-s); color: var(--paper);
+    padding: 10px 14px;
+    display: none; justify-content: space-between; align-items: center; gap: 10px;
+    font-size: 14px;
+  }
+  .undo.show { display: flex; }
+  .undo button {
+    background: none; border: none; color: var(--paper);
+    text-decoration: underline; font-size: 14px; cursor: pointer; padding: 6px;
+  }
+  .warn-note { font-size: 13px; color: var(--warn); margin-top: 10px; }
+  .soft-note { font-size: 13px; color: var(--steel-s); margin-top: 10px; }
+  [hidden] { display: none !important; }
+
+  .open-line { font-size: 13px; color: var(--steel-s); margin-top: 16px; }
+  .open-line label { color: var(--ink-s); text-decoration: underline; cursor: pointer; }
+
+  .grp-head {
+    display: flex; flex-wrap: wrap; justify-content: space-between;
+    align-items: baseline; gap: 4px 10px;
+    border-top: 2px solid var(--ink-s);
+    margin: 16px 0 8px; padding: 6px 2px 0;
+    cursor: pointer;
+  }
+  .grp-name {
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .grp-dup { font-size: 12px; color: var(--steel-s); }
+  .grp-actions { font-size: 12px; color: var(--steel-s); text-decoration: underline; margin-left: auto; }
+  .grp-end {
+    border-top: 1px solid var(--line-soft);
+    margin: 16px 0 8px; padding: 6px 2px 0;
+    font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--steel-s);
+  }
+  .grp-head.editing { cursor: default; align-items: center; }
+  .grp-input { max-width: 230px; font-size: 16px; }
+
+  .path { width: 100%; text-align: left; margin-top: 14px; padding: 14px 16px; }
+  .path-sub { font-size: 13px; color: var(--steel-s); margin-top: 5px; line-height: 1.45; }
+
+  /* the daily count screen — the governing constraint is speed (§9):
+     tab flows down the page, Enter jumps to the next count, blank
+     means zero, groups are section breaks not stops */
+  .cgrp {
+    border-top: 2px solid var(--ink-s);
+    margin: 16px 0 8px; padding: 6px 2px 0;
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .crow {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 5em;
+    gap: 6px 10px; align-items: center; margin-bottom: 6px;
+  }
+  .crow .cname { font-weight: 600; font-size: 15px; }
+  .crow .cref { font-size: 12px; color: var(--steel-s); }
+  .crow .cnt { text-align: right; padding: 8px 10px; }
+  @media (max-width: 560px) {
+    .crow { grid-template-columns: minmax(0, 1fr) 5em; }
+    .crow .cref { display: none; }
+  }
+
+  .lg-opt { font-size: 13px; color: var(--steel-s); display: inline-flex; align-items: center; gap: 6px; padding: 12px 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="toolnav">
+    <a class="backlink" href="index.html">&larr; Line Tools</a>
+    <span class="toolnav-x"><a href="pars.html">Station Setup and Pars</a> &middot; <a href="checklists.html">Operational Checks</a> &middot; <a href="cleaning.html">Cleaning and Maintenance Checks</a></span>
+  </nav>
+  <div class="top">
+    <h1>Prep Lists</h1>
+    <div class="save-state" id="saveState"></div>
+  </div>
+  <p class="sub">Your batch items &mdash; build-tos and batch sizes. Count what&rsquo;s on
+    hand and print what to make. It saves on this device as you type.</p>
+
+  <div class="banner" id="storeWarn"></div>
+
+  <div class="panel" id="emptyState" hidden>
+    <h2>Set up your prep list</h2>
+    <p class="sub">One list holds up to 80 items, and item names fit about 22 letters.
+      Your list stays on this device &mdash; nothing is sent anywhere, and you can
+      save a copy any time.</p>
+    <button class="btn path" id="pathBlank" type="button">Start blank</button>
+    <div class="path-sub">Type in your items with a unit, a build-to, and what a 1x batch makes.</div>
+    <button class="btn ghost path" id="pathCapture" type="button">Print a blank count sheet</button>
+    <div class="path-sub">Walk the coolers and write down what you carry, then come back and type it in.</div>
+    <p class="open-line">Already have a saved list? <label for="filePick">Open it</label></p>
+  </div>
+
+  <div class="panel" id="editPanel" hidden>
+    <div class="panel-head">
+      <h2 id="listName" title="Rename"></h2>
+      <div class="head-right">
+        <span id="itemCount"></span>
+        <button type="button" class="btn small" id="countBtn">Today&rsquo;s counts</button>
+      </div>
+    </div>
+    <div class="col-heads"><span></span><span>Item</span><span>Unit</span><span>Build to</span><span>1x =</span><span></span></div>
+    <div id="rows"></div>
+    <div class="actions">
+      <button class="btn" id="addBtn" type="button">Add an item</button>
+    </div>
+    <div id="capNote" hidden></div>
+  </div>
+
+  <div class="panel" id="countPanel" hidden>
+    <div class="panel-head">
+      <h2>Today&rsquo;s counts</h2>
+      <div class="head-right">
+        <button type="button" class="btn small ghost" id="countBackBtn">&larr; Back to the list</button>
+      </div>
+    </div>
+    <p class="sub">Type what&rsquo;s on hand. Blank means zero. Tab or Enter moves to the next item.</p>
+    <div id="countRows"></div>
+    <div class="actions">
+      <button class="btn" id="printListBtn" type="button">Print the prep list</button>
+    </div>
+  </div>
+
+  <div class="data-actions" id="dataActions" hidden>
+    <button class="btn ghost" id="printCountBtn" type="button">Print the count sheet</button>
+    <button class="btn ghost" id="printListBtn2" type="button">Print the prep list</button>
+    <button class="btn ghost" id="blankBtn" type="button">Print a blank count sheet</button>
+    <label class="lg-opt"><input type="checkbox" id="largePrint"> Larger print (two pages)</label>
+    <button class="btn ghost" id="saveCopy" type="button">Save a copy of everything</button>
+    <label class="btn ghost" for="filePick">Open a saved list&hellip;</label>
+    <input class="file-input" type="file" id="filePick" accept=".json,application/json">
+  </div>
+
+  <footer class="sitefoot">
+    <span class="byline"><a href="https://studioamadeus.github.io/">Line Tools is built by Studio Amadeus</a> &mdash; so is <a href="https://boil.kitchen/">BOIL</a>, where systems live when a team outgrows paper.</span>
+    <span>Something broken or missing? <a href="mailto:support@boil.kitchen">Write to support@boil.kitchen</a></span>
+  </footer>
+</div>
+
+<div class="undo" id="undoBar">
+  <span id="undoText"></span>
+  <button type="button" id="undoBtn">Put it back</button>
+</div>
+
+<div id="printArea"></div>
+
+<script src="assets/fit.js"></script>
+<script src="assets/render.js"></script>
+<script src="assets/store.js"></script>
+<script src="assets/edit.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var MAX_ITEMS = 80;   /* the tool designs for 80 (Adam, 6.1) */
+
+  var ED = RSListEdit({
+    blankItem: function () {
+      return { id: RS.uid(), name: "", unit: "", buildTo: "", batchSize: "", group: "" };
+    },
+    editable: { name: true, unit: true, buildTo: true, batchSize: true },
+    defaultName: "Prep list"
+  });
+
+  var store = RS.makeStore(
+    "prep-lists-v1",
+    function () { return { stations: [] }; },
+    function (p) { return !!(p && p.stations && p.stations.length !== undefined); }
+  );
+  /* Today's counts persist only as a draft so a reload doesn't cost
+     forty entries — overwritten next time, never accumulated, never
+     part of a saved copy. The moment counts have a history this is an
+     audit trail, and that is BOIL (§9/§10). */
+  var draftStore = RS.makeStore(
+    "prep-counts-draft-v1",
+    function () { return { counts: {} }; },
+    function (p) { return !!(p && p.counts); }
+  );
+
+  var state = store.load();
+  var draft = draftStore.load();
+  var menuOpen = false;
+  var counting = false;
+  var pendingUndo = null;
+  var undoTimer = null;
+  var dragId = null;
+
+  var el = function (id) { return document.getElementById(id); };
+
+  function setStatus(s) { el("saveState").textContent = s; }
+  function persist() { store.save(state, setStatus); }
+  function persistDraft() { draftStore.save(draft, function () {}); }
+
+  if (!RS.canStore) {
+    el("storeWarn").textContent =
+      "This browser can’t save — anything you type is gone when the page closes. Printing still works.";
+    el("storeWarn").className = "banner show";
+  } else if (store.hadBadData) {
+    el("storeWarn").textContent =
+      "Couldn’t read what was saved on this device, so this is a fresh start. Your old list is kept aside, not thrown away.";
+    el("storeWarn").className = "banner show";
+  }
+
+  /* one list per kitchen — the backup keeps the family's shape */
+  function list() { return state.stations[0] || null; }
+
+  /* ---------- rendering ---------- */
+
+  function render() {
+    var empty = !state.stations.length;
+    var menu = empty || menuOpen;
+    el("emptyState").hidden = !menu;
+    el("editPanel").hidden = menu || counting;
+    el("countPanel").hidden = menu || !counting;
+    el("dataActions").hidden = menu;
+    if (menu) return;
+    if (counting) { renderCounts(); } else { renderRows(); }
+  }
+
+  function rowHtml(it) {
+    return '<div class="row" data-id="' + RS.esc(it.id) + '">' +
+      '<span class="drag-handle" draggable="true" title="Drag to reorder">&#10303;</span>' +
+      '<input class="field f-name" value="' + RS.esc(it.name) + '" placeholder="Item" maxlength="22">' +
+      '<input class="field f-unit" value="' + RS.esc(it.unit) + '" placeholder="gal" maxlength="4">' +
+      '<input class="field f-bto" value="' + RS.esc(it.buildTo) + '" placeholder="2" maxlength="5" inputmode="decimal">' +
+      '<input class="field f-bs" value="' + RS.esc(it.batchSize) + '" placeholder="1" maxlength="5" inputmode="decimal">' +
+      '<div class="controls">' +
+        '<button type="button" class="icon-btn" data-act="up" aria-label="Move up">&#8593;</button>' +
+        '<button type="button" class="icon-btn" data-act="down" aria-label="Move down">&#8595;</button>' +
+        '<button type="button" class="icon-btn grp-btn" data-act="grp">+ Group</button>' +
+        '<button type="button" class="icon-btn ins-btn" data-act="ins" aria-label="Add an item below" title="Add an item below">+</button>' +
+        '<button type="button" class="icon-btn danger" data-act="del" aria-label="Delete">&#10005;</button>' +
+      '</div></div>';
+  }
+
+  var FIELDS = { "f-name": "name", "f-unit": "unit", "f-bto": "buildTo", "f-bs": "batchSize" };
+
+  function bindRow(row) {
+    var id = row.getAttribute("data-id");
+
+    var handle = row.getElementsByClassName("drag-handle")[0];
+    if (handle) {
+      handle.ondragstart = function (e) {
+        dragId = id;
+        e.dataTransfer.setData("text/plain", id);
+        e.dataTransfer.effectAllowed = "move";
+        row.className = "row dragging";
+      };
+      handle.ondragend = function () { dragId = null; renderRows(); };
+    }
+    row.ondragover = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      var r = row.getBoundingClientRect();
+      row.className = "row " +
+        (e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+    };
+    row.ondragleave = function () {
+      if (row.className.indexOf("drop-") >= 0) row.className = "row";
+    };
+    row.ondrop = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      var r = row.getBoundingClientRect();
+      var before = e.clientY < r.top + r.height / 2;
+      var st = list(), from = -1, to = -1, k;
+      for (k = 0; k < st.items.length; k++) {
+        if (st.items[k].id === dragId) from = k;
+        if (st.items[k].id === id) to = k;
+      }
+      var moved = dragId;
+      dragId = null;
+      if (from < 0 || to < 0) { renderRows(); return; }
+      var target = before ? to : to + 1;
+      if (from < target) target--;
+      if (ED.moveItemTo(st, moved, target)) persist();
+      renderRows();
+    };
+
+    var cls, input;
+    for (cls in FIELDS) {
+      input = row.getElementsByClassName(cls)[0];
+      (function (input, field) {
+        input.oninput = function () {
+          ED.updateItem(list(), id, field, input.value);
+          persist();
+          refreshMeta();
+        };
+      })(input, FIELDS[cls]);
+    }
+
+    var btns = row.getElementsByClassName("icon-btn"), i;
+    for (i = 0; i < btns.length; i++) {
+      (function (btn) {
+        btn.onclick = function () {
+          var act = btn.getAttribute("data-act");
+          if (act === "up" || act === "down") {
+            if (ED.moveItem(list(), id, act === "up" ? -1 : 1)) {
+              persist(); renderRows();
+            }
+          } else if (act === "grp") {
+            groupFromRow(row, id);
+          } else if (act === "ins") {
+            if (namedCount() >= MAX_ITEMS) { refreshMeta(); return; }
+            var added = ED.insertItemAfter(list(), id);
+            if (added) {
+              persist(); renderRows();
+              var nr = el("rows").querySelector('[data-id="' + added.id + '"]');
+              if (nr) nr.getElementsByClassName("f-name")[0].focus();
+            }
+          } else if (act === "del") { del(id); }
+        };
+      })(btns[i]);
+    }
+  }
+
+  /* The headings and the rows are separate grids sharing --cols, so
+     the auto and fr tracks resolve against different content and the
+     headings drift off the fields (Adam, 6.2 fix — the same lesson as
+     every geometry bug in this project: measure, never eyeball). Copy
+     the first row's USED track sizes onto the headings — exact on any
+     device, self-healing on resize. */
+  function alignHeads() {
+    var heads = document.querySelector(".col-heads");
+    var row = el("rows").getElementsByClassName("row")[0];
+    if (!heads) return;
+    heads.style.gridTemplateColumns =
+      row ? getComputedStyle(row).gridTemplateColumns : "";
+  }
+  window.addEventListener("resize", alignHeads);
+
+  function renderRows() {
+    var st = list();
+    var h = "", i, it, g, prev = null;
+    if (!st) { el("rows").innerHTML = ""; refreshMeta(); return; }
+
+    var dups = {}, dupList = ED.splitRunNames(st), runs = ED.runsOf(st), d;
+    for (d = 0; d < dupList.length; d++) {
+      var places = 0;
+      for (i = 0; i < runs.length; i++) {
+        if (ED.foldGroup(runs[i].name) === dupList[d]) places++;
+      }
+      dups[dupList[d]] = places;
+    }
+
+    for (i = 0; i < st.items.length; i++) {
+      it = st.items[i];
+      g = it.group || "";
+      if (!g && prev) {
+        h += '<div class="grp-end">No group</div>';
+      }
+      if (g && g !== prev) {
+        h += '<div class="grp-head" data-first="' + RS.esc(it.id) +
+          '" data-name="' + RS.esc(g) + '">' +
+          '<span class="grp-name">' + RS.esc(g) + '</span>' +
+          (dups[ED.foldGroup(g)]
+            ? '<span class="grp-dup">&ldquo;' + RS.esc(g) + '&rdquo; prints in ' +
+              dups[ED.foldGroup(g)] + ' places</span>'
+            : '') +
+          '<span class="grp-actions">Rename &middot; ungroup</span>' +
+          '</div>';
+      }
+      prev = g;
+      h += rowHtml(it);
+    }
+    el("rows").innerHTML = h;
+    var rows = el("rows").getElementsByClassName("row");
+    for (i = 0; i < rows.length; i++) bindRow(rows[i]);
+    var heads = el("rows").getElementsByClassName("grp-head"), j;
+    for (j = 0; j < heads.length; j++) {
+      (function (head) {
+        head.onclick = function () {
+          openGroupEdit(head, head.getAttribute("data-first"),
+            head.getAttribute("data-name"));
+        };
+      })(heads[j]);
+    }
+    refreshMeta();
+  }
+
+  function namedCount() {
+    var st = list(), n = 0, i;
+    if (st) for (i = 0; i < st.items.length; i++) if (st.items[i].name) n++;
+    return n;
+  }
+
+  function refreshMeta() {
+    alignHeads();
+    var st = list();
+    el("listName").textContent = st ? (st.name || "Prep list") : "";
+    var n = namedCount();
+    el("itemCount").textContent = st ? n + (n === 1 ? " item" : " items") : "";
+
+    var note = el("capNote");
+    el("addBtn").disabled = n >= MAX_ITEMS;
+    if (n >= MAX_ITEMS) {
+      note.textContent = "80 items is the max — the sheets stay one page at 80 and no more.";
+      note.className = "warn-note";
+      note.hidden = false;
+    } else if (n > 42) {
+      note.textContent = "Past about 42 rows the sheets shift to the dense three-column print.";
+      note.className = "soft-note";
+      note.hidden = false;
+    } else {
+      note.hidden = true;
+    }
+  }
+
+  /* ---------- rename ---------- */
+
+  function startRename() {
+    var st = list();
+    if (!st) return;
+    var h2 = el("listName");
+    var input = document.createElement("input");
+    input.className = "field rename-field";
+    input.value = st.name;
+    input.placeholder = "List name";
+    h2.textContent = "";
+    h2.appendChild(input);
+    input.focus();
+    input.select();
+    function done(commit) {
+      if (commit && input.value.trim() !== st.name) {
+        ED.renameStation(st, input.value.trim());
+        persist();
+      }
+      refreshMeta();
+    }
+    input.onblur = function () { done(true); };
+    input.onkeydown = function (e) {
+      if (e.key === "Enter") { input.onblur = null; done(true); }
+      if (e.key === "Escape") { input.onblur = null; done(false); }
+    };
+  }
+  el("listName").onclick = function (e) {
+    if (e.target.tagName !== "INPUT") startRename();
+  };
+
+  /* ---------- groups ---------- */
+
+  function openGroupEdit(anchor, firstId, existing) {
+    var wrap = document.createElement("div");
+    wrap.className = "grp-head editing";
+    wrap.innerHTML =
+      '<input class="field grp-input" placeholder="Group name" value="' + RS.esc(existing) + '">' +
+      (existing
+        ? '<button type="button" class="btn small ghost grp-ungroup">Ungroup</button>'
+        : '');
+    anchor.parentNode.replaceChild(wrap, anchor);
+    var input = wrap.getElementsByClassName("grp-input")[0];
+    input.focus();
+    if (existing) input.select();
+
+    function commit(val) {
+      if (val !== null) {
+        var v = val.trim();
+        if (v) { ED.setRunGroup(list(), firstId, v); persist(); }
+        else if (existing) { ED.setRunGroup(list(), firstId, ""); persist(); }
+      }
+      renderRows();
+    }
+    input.onblur = function () { commit(input.value); };
+    input.onkeydown = function (e) {
+      if (e.key === "Enter") { input.onblur = null; commit(input.value); }
+      if (e.key === "Escape") { input.onblur = null; commit(null); }
+    };
+    var un = wrap.getElementsByClassName("grp-ungroup")[0];
+    if (un) {
+      un.onmousedown = function (e) { e.preventDefault(); };
+      un.onclick = function () {
+        input.onblur = null;
+        ED.setRunGroup(list(), firstId, "");
+        persist();
+        renderRows();
+      };
+    }
+  }
+
+  function groupFromRow(row, id) {
+    var st = list(), i, idx = -1;
+    for (i = 0; i < st.items.length; i++) if (st.items[i].id === id) { idx = i; break; }
+    if (idx < 0) return;
+    var g = st.items[idx].group || "";
+    var startsRun = g && (idx === 0 || (st.items[idx - 1].group || "") !== g);
+    if (startsRun) {
+      openGroupEdit(row.previousElementSibling, id, g);
+    } else {
+      var placeholder = document.createElement("div");
+      row.parentNode.insertBefore(placeholder, row);
+      openGroupEdit(placeholder, id, "");
+    }
+  }
+
+  /* ---------- undo ---------- */
+
+  function showUndo(text) {
+    el("undoText").textContent = text;
+    el("undoBar").className = "undo show";
+    if (undoTimer) clearTimeout(undoTimer);
+    undoTimer = setTimeout(hideUndo, 8000);
+  }
+  function hideUndo() {
+    el("undoBar").className = "undo";
+    pendingUndo = null;
+  }
+  el("undoBtn").onclick = function () {
+    if (!pendingUndo) return;
+    ED.restoreItem(pendingUndo.station, pendingUndo.removed);
+    persist();
+    hideUndo();
+    render();
+  };
+
+  function del(id) {
+    var st = list();
+    var removed = ED.removeItem(st, id);
+    if (!removed) return;
+    persist(); renderRows();
+    var it = removed.item;
+    if (!it.name) return;
+    pendingUndo = { kind: "item", station: st, removed: removed };
+    showUndo("Deleted “" + (it.name || "item") + "”");
+  }
+
+  /* ---------- the daily counts (§9: entry is the governing constraint) ---------- */
+
+  el("countBtn").onclick = function () { counting = true; render(); focusFirstCount(); };
+  el("countBackBtn").onclick = function () { counting = false; render(); };
+
+  function focusFirstCount() {
+    var first = el("countRows").getElementsByClassName("cnt")[0];
+    if (first) first.focus();
+  }
+
+  function renderCounts() {
+    var st = list();
+    var h = "", i, it, g, prev = null;
+    if (!st) { el("countRows").innerHTML = ""; return; }
+    for (i = 0; i < st.items.length; i++) {
+      it = st.items[i];
+      if (!it.name) continue;
+      g = it.group || "";
+      if (g && g !== prev) { h += '<div class="cgrp">' + RS.esc(g) + '</div>'; }
+      prev = g;
+      var ref = [];
+      if (it.buildTo) ref.push("build to " + RS.esc(it.buildTo) + (it.unit ? " " + RS.esc(it.unit) : ""));
+      if (it.batchSize) ref.push("1x = " + RS.esc(it.batchSize) + (it.unit ? " " + RS.esc(it.unit) : ""));
+      var v = draft.counts[it.id];
+      h += '<div class="crow" data-id="' + RS.esc(it.id) + '">' +
+        '<span class="cname">' + RS.esc(it.name) + '</span>' +
+        '<span class="cref">' + ref.join(" &middot; ") + '</span>' +
+        '<input class="field cnt" inputmode="decimal" autocomplete="off" value="' +
+          (v == null ? "" : RS.esc(String(v))) + '">' +
+      '</div>';
+    }
+    el("countRows").innerHTML = h;
+    var inputs = el("countRows").getElementsByClassName("cnt");
+    for (i = 0; i < inputs.length; i++) {
+      (function (input, idx) {
+        var id = input.parentNode.getAttribute("data-id");
+        input.oninput = function () {
+          if (input.value === "") { delete draft.counts[id]; }
+          else { draft.counts[id] = input.value; }
+          persistDraft();
+        };
+        input.onkeydown = function (e) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            var next = inputs[idx + 1];
+            if (next) { next.focus(); next.select(); }
+          }
+        };
+      })(inputs[i], i);
+    }
+  }
+
+  /* what needs making today — items in list order, filtered by the §9
+     calculation, never sorted */
+  function survivors() {
+    var st = list(), out = [], i, it, mk;
+    if (!st) return out;
+    for (i = 0; i < st.items.length; i++) {
+      it = st.items[i];
+      if (!it.name) continue;
+      mk = RSRender.prepMake(it.buildTo, draft.counts[it.id], it.batchSize);
+      if (mk === null) continue;
+      out.push({ name: it.name, make: mk, group: it.group || "" });
+    }
+    return out;
+  }
+
+  /* ---------- menu paths ---------- */
+
+  el("pathBlank").onclick = function () {
+    ED.createStation(state, "Prep list");
+    menuOpen = false;
+    persist(); render();
+  };
+
+  el("pathCapture").onclick = function () { printSheets({ sheets: [RSRender.blankCountSheet()], clipped: false }); };
+
+  /* ---------- add item ---------- */
+
+  el("addBtn").onclick = function () {
+    if (!list() || namedCount() >= MAX_ITEMS) return;
+    ED.addItem(list());
+    persist(); renderRows();
+    var rows = el("rows").getElementsByClassName("row");
+    if (rows.length) rows[rows.length - 1].getElementsByClassName("f-name")[0].focus();
+  };
+
+  /* ---------- print ---------- */
+
+  function printSheets(result) {
+    if (!result || !result.sheets.length) return;
+    if (result.clipped &&
+        !window.confirm("Too long for the page — items past the bottom will be cut off. Print anyway?")) {
+      return;
+    }
+    store.flush();
+    draftStore.flush();
+    var h = "", i;
+    for (i = 0; i < result.sheets.length; i++) h += result.sheets[i].html;
+    el("printArea").innerHTML = h;
+    window.print();
+  }
+
+  function largeOpt() { return { large: el("largePrint").checked }; }
+
+  el("printCountBtn").onclick = function () {
+    var st = list();
+    if (!st) return;
+    printSheets(RSRender.prepCountSheets(st.name || "Prep list", st.items, st.updatedAt, largeOpt()));
+  };
+  function printPrepList() {
+    var st = list();
+    if (!st) return;
+    printSheets(RSRender.prepListSheets("Prep list", survivors(), st.updatedAt, largeOpt()));
+  }
+  el("printListBtn").onclick = printPrepList;
+  el("printListBtn2").onclick = printPrepList;
+  el("blankBtn").onclick = function () { printSheets({ sheets: [RSRender.blankCountSheet()], clipped: false }); };
+
+  /* ---------- save / open ---------- */
+
+  el("saveCopy").onclick = function () {
+    if (!state.stations.length) return;
+    store.flush();
+    /* one file for all four tools (6.4) — the live state is
+       handed over so this tool's copy is current even before
+       the debounce flushes */
+    RS.exportEverything("prep-lists-v1", state);
+    setStatus("Everything saved to your downloads");
+    setTimeout(function () { setStatus(""); }, 3000);
+  };
+
+  el("filePick").onchange = function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    RS.readBackup(f,
+      function (p) { return RS.isEverything(p) ||
+        !!(p && p.stations && p.stations.length !== undefined); },
+      function (parsed) {
+        /* a whole-site file restores every tool at once; an older
+           single-tool file still opens exactly as it always did */
+        if (RS.isEverything(parsed)) {
+          if (!window.confirm("Replace everything on this device — all your lists in all four tools — with what’s in that file?")) {
+            return;
+          }
+          var n = RS.restoreEverything(parsed);
+          state = store.load();
+          menuOpen = false;
+          counting = false;
+          hideUndo();
+          render();
+          setStatus("Restored " + n + (n === 1 ? " tool" : " tools"));
+          setTimeout(function () { setStatus(""); }, 4000);
+          return;
+        }
+        var hasWork = namedCount() > 0;
+        if (hasWork &&
+            !window.confirm("Replace what’s on this device with the list from that file?")) {
+          return;
+        }
+        state = { stations: parsed.stations };
+        menuOpen = false;
+        counting = false;
+        hideUndo();
+        persist();
+        render();
+      },
+      function (msg) {
+        el("storeWarn").textContent = msg +
+          " Open the .json file the tool saved — it’s named like “prep-backup”.";
+        el("storeWarn").className = "banner show";
+      });
+    e.target.value = "";
+  };
+
+  /* ---------- boot ---------- */
+
+  if (window.PREP_BACKUP) {
+    state = { stations: window.PREP_BACKUP.stations };
+    draft = { counts: window.PREP_BACKUP.counts || {} };
+    render();
+    var st = list(), h = "";
+    if (st) {
+      var cs = RSRender.prepCountSheets(st.name || "Prep list", st.items, st.updatedAt);
+      var pl = RSRender.prepListSheets("Prep list", survivors(), st.updatedAt);
+      var i;
+      for (i = 0; i < cs.sheets.length; i++) h += cs.sheets[i].html;
+      for (i = 0; i < pl.sheets.length; i++) h += pl.sheets[i].html;
+    }
+    el("printArea").innerHTML = h;
+  } else {
+    render();
+  }
+})();
+</script>
+</body>
+</html>

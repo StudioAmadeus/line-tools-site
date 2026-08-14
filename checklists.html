@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Restaurant opening and closing checklists — Line Tools</title>
+<meta name="description" content="Type your opening and closing runs and print them as run sheets — a checkbox for every task. No account — your lists stay on your device.">
+<!-- ==================================================================
+     The second tool (5.1): run checklists — Opening / Closing. A named,
+     ordered list of tasks, optionally grouped, printed two-up with
+     per-task initials (SPEC §8). Built on the shared layer: RSListEdit
+     with a task config, runSheet/blankRunSheet on the same fit engine,
+     its own store key. The rotation matrix is 5.2.
+
+     File name is the builder's placeholder — naming is Adam's.
+     Dev hook: window.CHECKLISTS_BACKUP, same shape as the pars hook.
+     ================================================================== -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/print.css">
+<style>
+  /* task rows: handle · task · controls. No par, no where. */
+  .app { --cols: 1.2em minmax(0, 1fr) auto; }
+  .drag-handle {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--steel-s); cursor: grab; font-size: 13px;
+    -webkit-user-select: none; user-select: none;
+  }
+  .row.dragging { opacity: 0.4; }
+  .row.drop-before { box-shadow: 0 -3px 0 0 var(--ink-s); }
+  .row.drop-after  { box-shadow: 0 3px 0 0 var(--ink-s); }
+  .tab.drop-left  { box-shadow: -3px 0 0 0 var(--ink-s); }
+  .tab.drop-right { box-shadow: 3px 0 0 0 var(--ink-s); }
+  .danger-btn { color: var(--warn); }
+  .controls .icon-btn { padding: 10px 12px; font-size: 16px; line-height: 1; }
+  .controls .grp-btn { font-size: 13px; white-space: nowrap; }
+  @media (max-width: 560px) {
+    .row { --cols-narrow: minmax(0, 1fr) auto; }
+    .drag-handle, .ins-btn { display: none; }
+  }
+
+  .undo {
+    position: fixed; bottom: 12px; left: 12px; right: 12px;
+    max-width: 736px; margin: 0 auto;
+    background: var(--ink-s); color: var(--paper);
+    padding: 10px 14px;
+    display: none; justify-content: space-between; align-items: center; gap: 10px;
+    font-size: 14px;
+  }
+  .undo.show { display: flex; }
+  .undo button {
+    background: none; border: none; color: var(--paper);
+    text-decoration: underline; font-size: 14px; cursor: pointer; padding: 6px;
+  }
+  .warn-note { font-size: 13px; color: var(--warn); margin-top: 10px; }
+  .soft-note { font-size: 13px; color: var(--steel-s); margin-top: 10px; }
+  [hidden] { display: none !important; }
+
+  .open-line { font-size: 13px; color: var(--steel-s); margin-top: 16px; }
+  .open-line label { color: var(--ink-s); text-decoration: underline; cursor: pointer; }
+
+  .grp-head {
+    display: flex; flex-wrap: wrap; justify-content: space-between;
+    align-items: baseline; gap: 4px 10px;
+    border-top: 2px solid var(--ink-s);
+    margin: 16px 0 8px; padding: 6px 2px 0;
+    cursor: pointer;
+  }
+  .grp-name {
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .grp-dup { font-size: 12px; color: var(--steel-s); }
+  .grp-actions { font-size: 12px; color: var(--steel-s); text-decoration: underline; margin-left: auto; }
+  .grp-end {
+    border-top: 1px solid var(--line-soft);
+    margin: 16px 0 8px; padding: 6px 2px 0;
+    font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--steel-s);
+  }
+  .grp-head.editing { cursor: default; align-items: center; }
+  .grp-input { max-width: 230px; font-size: 16px; }
+
+
+  .path { width: 100%; text-align: left; margin-top: 14px; padding: 14px 16px; }
+  .path-sub { font-size: 13px; color: var(--steel-s); margin-top: 5px; line-height: 1.45; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="toolnav">
+    <a class="backlink" href="index.html">&larr; Line Tools</a>
+    <span class="toolnav-x"><a href="pars.html">Station Setup and Pars</a> &middot; <a href="cleaning.html">Cleaning and Maintenance Checks</a> &middot; <a href="prep.html">Prep Lists</a></span>
+  </nav>
+  <div class="top">
+    <h1>Operational Checks</h1>
+    <div class="save-state" id="saveState"></div>
+  </div>
+  <p class="sub">Opening and closing runs &mdash; do the tasks, check each one off.
+    It saves on this device as you type.</p>
+
+  <div class="banner" id="storeWarn"></div>
+
+  <div class="panel" id="emptyState" hidden>
+    <button class="btn ghost" id="menuBackBtn" type="button" hidden>&larr; Back to your checklists</button>
+    <h2>Set up your checklists</h2>
+    <p class="sub">A sheet fits about 36 tasks. Your list stays on this device &mdash;
+      nothing is sent anywhere, and you can save a copy any time.</p>
+    <button class="btn path" id="pathBlank" type="button">Start blank</button>
+    <div class="path-sub">Type in the run &mdash; opening, closing, or both.</div>
+    <button class="btn ghost path" id="pathCapture" type="button">Print a blank run sheet</button>
+    <div class="path-sub">Write the run by hand at the station, use it tonight, and type it in later.</div>
+    <p class="open-line">Already have a saved list? <label for="filePick">Open it</label></p>
+  </div>
+
+  <div class="tabs" id="tabs" hidden></div>
+
+  <div class="panel" id="panel" hidden>
+    <div class="panel-head">
+      <h2 id="stationName" title="Rename"></h2>
+      <div class="head-right">
+        <span id="itemCount"></span>
+        <button type="button" class="icon-btn" id="stLeft" aria-label="Move checklist left" title="Move checklist left">&#9668;</button>
+        <button type="button" class="icon-btn" id="stRight" aria-label="Move checklist right" title="Move checklist right">&#9658;</button>
+        <button type="button" class="btn small ghost danger-btn" id="stDelete">Delete checklist</button>
+      </div>
+    </div>
+    <div class="col-heads"><span></span><span>Task</span><span></span></div>
+    <div id="rows"></div>
+    <div class="actions">
+      <button class="btn" id="addBtn" type="button">Add a task</button>
+    </div>
+    <div id="capNote" hidden></div>
+  </div>
+
+  <div class="data-actions" id="dataActions" hidden>
+    <button class="btn ghost" id="printOne" type="button">Print this checklist</button>
+    <button class="btn ghost" id="printAll" type="button">Print all checklists</button>
+    <button class="btn ghost" id="blankBtn" type="button">Print a blank run sheet</button>
+    <button class="btn ghost" id="saveCopy" type="button">Save a copy of everything</button>
+    <label class="btn ghost" for="filePick">Open a saved list&hellip;</label>
+    <input class="file-input" type="file" id="filePick" accept=".json,application/json">
+  </div>
+
+  <footer class="sitefoot">
+    <span class="byline"><a href="https://studioamadeus.github.io/">Line Tools is built by Studio Amadeus</a> &mdash; so is <a href="https://boil.kitchen/">BOIL</a>, where systems live when a team outgrows paper.</span>
+    <span>Something broken or missing? <a href="mailto:support@boil.kitchen">Write to support@boil.kitchen</a></span>
+  </footer>
+
+
+</div>
+
+<div class="undo" id="undoBar">
+  <span id="undoText"></span>
+  <button type="button" id="undoBtn">Put it back</button>
+</div>
+
+<div id="printArea"></div>
+
+<script src="assets/fit.js"></script>
+<script src="assets/render.js"></script>
+<script src="assets/store.js"></script>
+<script src="assets/edit.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* the checklist editor: same operations, task-shaped rows */
+  var ED = RSListEdit({
+    blankItem: function () {
+      return { id: RS.uid(), name: "", group: "" };
+    },
+    editable: { name: true },
+    defaultName: "Checklist"
+  });
+
+  var store = RS.makeStore(
+    "checklists-v1",
+    function () { return { stations: [] }; },
+    function (p) { return !!(p && p.stations && p.stations.length !== undefined); }
+  );
+
+  var state = store.load();
+  var cur = 0;
+  var menuOpen = false;
+  var pendingUndo = null;
+  var undoTimer = null;
+  var dragId = null;
+  var dragStIdx = -1;
+
+  var el = function (id) { return document.getElementById(id); };
+
+  function setStatus(s) { el("saveState").textContent = s; }
+  function persist() { store.save(state, setStatus); }
+
+  if (!RS.canStore) {
+    el("storeWarn").textContent =
+      "This browser can’t save — anything you type is gone when the page closes. Printing still works.";
+    el("storeWarn").className = "banner show";
+  } else if (store.hadBadData) {
+    el("storeWarn").textContent =
+      "Couldn’t read what was saved on this device, so this is a fresh start. Your old list is kept aside, not thrown away.";
+    el("storeWarn").className = "banner show";
+  }
+
+  function station() { return state.stations[cur] || null; }
+
+  /* ---------- rendering ---------- */
+
+  function render() {
+    var empty = !state.stations.length;
+    var menu = empty || menuOpen;
+    el("emptyState").hidden = !menu;
+    el("menuBackBtn").hidden = empty;
+    el("tabs").hidden = menu;
+    el("panel").hidden = menu;
+    el("dataActions").hidden = menu;
+    if (menu) return;
+    if (cur >= state.stations.length) cur = state.stations.length - 1;
+    renderTabs();
+    renderRows();
+  }
+
+  function renderTabs() {
+    var h = "", i, s;
+    for (i = 0; i < state.stations.length; i++) {
+      s = state.stations[i];
+      h += '<button type="button" class="tab' + (i === cur ? " on" : "") +
+        '" draggable="true" data-i="' + i + '">' +
+        RS.esc(s.name || "Unnamed checklist") + "</button>";
+    }
+    h += '<button type="button" class="tab add" id="addStation">+ Checklist</button>';
+    el("tabs").innerHTML = h;
+    var btns = el("tabs").getElementsByTagName("button"), j;
+    for (j = 0; j < btns.length; j++) {
+      (function (b) {
+        b.onclick = function () {
+          if (b.id === "addStation") { menuOpen = true; render(); }
+          else { cur = Number(b.getAttribute("data-i")); render(); }
+        };
+        if (b.id === "addStation") return;
+        b.ondragstart = function (e) {
+          dragStIdx = Number(b.getAttribute("data-i"));
+          e.dataTransfer.setData("text/plain", String(dragStIdx));
+          e.dataTransfer.effectAllowed = "move";
+        };
+        b.ondragend = function () { dragStIdx = -1; renderTabs(); };
+        b.ondragover = function (e) {
+          var idx = Number(b.getAttribute("data-i"));
+          if (dragStIdx < 0 || dragStIdx === idx) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          var r = b.getBoundingClientRect();
+          b.className = b.className.replace(/ drop-(left|right)/g, "") +
+            (e.clientX < r.left + r.width / 2 ? " drop-left" : " drop-right");
+        };
+        b.ondragleave = function () {
+          b.className = b.className.replace(/ drop-(left|right)/g, "");
+        };
+        b.ondrop = function (e) {
+          var idx = Number(b.getAttribute("data-i"));
+          if (dragStIdx < 0 || dragStIdx === idx) return;
+          e.preventDefault();
+          var r = b.getBoundingClientRect();
+          var target = (e.clientX < r.left + r.width / 2) ? idx : idx + 1;
+          if (dragStIdx < target) target--;
+          var focused = state.stations[cur];
+          if (ED.moveStationTo(state, dragStIdx, target)) {
+            cur = state.stations.indexOf(focused);
+            persist();
+          }
+          dragStIdx = -1;
+          renderTabs();
+        };
+      })(btns[j]);
+    }
+  }
+
+  function rowHtml(it) {
+    return '<div class="row" data-id="' + RS.esc(it.id) + '">' +
+      '<span class="drag-handle" draggable="true" title="Drag to reorder">&#10303;</span>' +
+      '<input class="field f-name" value="' + RS.esc(it.name) + '" placeholder="Task">' +
+      '<div class="controls">' +
+        '<button type="button" class="icon-btn" data-act="up" aria-label="Move up">&#8593;</button>' +
+        '<button type="button" class="icon-btn" data-act="down" aria-label="Move down">&#8595;</button>' +
+        '<button type="button" class="icon-btn grp-btn" data-act="grp">+ Group</button>' +
+        '<button type="button" class="icon-btn ins-btn" data-act="ins" aria-label="Add a task below" title="Add a task below">+</button>' +
+        '<button type="button" class="icon-btn danger" data-act="del" aria-label="Delete">&#10005;</button>' +
+      '</div></div>';
+  }
+
+  function bindRow(row) {
+    var id = row.getAttribute("data-id");
+
+    var handle = row.getElementsByClassName("drag-handle")[0];
+    if (handle) {
+      handle.ondragstart = function (e) {
+        dragId = id;
+        e.dataTransfer.setData("text/plain", id);
+        e.dataTransfer.effectAllowed = "move";
+        row.className = "row dragging";
+      };
+      handle.ondragend = function () { dragId = null; renderRows(); };
+    }
+    row.ondragover = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      var r = row.getBoundingClientRect();
+      row.className = "row " +
+        (e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+    };
+    row.ondragleave = function () {
+      if (row.className.indexOf("drop-") >= 0) row.className = "row";
+    };
+    row.ondrop = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      var r = row.getBoundingClientRect();
+      var before = e.clientY < r.top + r.height / 2;
+      var st = station(), from = -1, to = -1, k;
+      for (k = 0; k < st.items.length; k++) {
+        if (st.items[k].id === dragId) from = k;
+        if (st.items[k].id === id) to = k;
+      }
+      var moved = dragId;
+      dragId = null;
+      if (from < 0 || to < 0) { renderRows(); return; }
+      var target = before ? to : to + 1;
+      if (from < target) target--;
+      if (ED.moveItemTo(st, moved, target)) persist();
+      renderRows();
+    };
+
+    var input = row.getElementsByClassName("f-name")[0];
+    input.oninput = function () {
+      ED.updateItem(station(), id, "name", input.value);
+      persist();
+      refreshMeta();
+    };
+
+    var btns = row.getElementsByClassName("icon-btn"), i;
+    for (i = 0; i < btns.length; i++) {
+      (function (btn) {
+        btn.onclick = function () {
+          var act = btn.getAttribute("data-act");
+          if (act === "up" || act === "down") {
+            if (ED.moveItem(station(), id, act === "up" ? -1 : 1)) {
+              persist(); renderRows();
+            }
+          } else if (act === "grp") {
+            groupFromRow(row, id);
+          } else if (act === "ins") {
+            var added = ED.insertItemAfter(station(), id);
+            if (added) {
+              persist(); renderRows();
+              var nr = el("rows").querySelector('[data-id="' + added.id + '"]');
+              if (nr) nr.getElementsByClassName("f-name")[0].focus();
+            }
+          } else if (act === "del") { del(id); }
+        };
+      })(btns[i]);
+    }
+  }
+
+  /* The headings and the rows are separate grids sharing --cols, so
+     the auto and fr tracks resolve against different content and the
+     headings drift off the fields (Adam, 6.2 fix — the same lesson as
+     every geometry bug in this project: measure, never eyeball). Copy
+     the first row's USED track sizes onto the headings — exact on any
+     device, self-healing on resize. */
+  function alignHeads() {
+    var heads = document.querySelector(".col-heads");
+    var row = el("rows").getElementsByClassName("row")[0];
+    if (!heads) return;
+    heads.style.gridTemplateColumns =
+      row ? getComputedStyle(row).gridTemplateColumns : "";
+  }
+  window.addEventListener("resize", alignHeads);
+
+  function renderRows() {
+    var st = station();
+    var h = "", i, it, g, prev = null;
+    if (!st) { el("rows").innerHTML = ""; refreshMeta(); return; }
+
+    var dups = {}, dupList = ED.splitRunNames(st), runs = ED.runsOf(st), d;
+    for (d = 0; d < dupList.length; d++) {
+      var places = 0;
+      for (i = 0; i < runs.length; i++) {
+        if (ED.foldGroup(runs[i].name) === dupList[d]) places++;
+      }
+      dups[dupList[d]] = places;
+    }
+
+    for (i = 0; i < st.items.length; i++) {
+      it = st.items[i];
+      g = it.group || "";
+      if (!g && prev) {
+        h += '<div class="grp-end">No group</div>';
+      }
+      if (g && g !== prev) {
+        h += '<div class="grp-head" data-first="' + RS.esc(it.id) +
+          '" data-name="' + RS.esc(g) + '">' +
+          '<span class="grp-name">' + RS.esc(g) + '</span>' +
+          (dups[ED.foldGroup(g)]
+            ? '<span class="grp-dup">&ldquo;' + RS.esc(g) + '&rdquo; prints in ' +
+              dups[ED.foldGroup(g)] + ' places</span>'
+            : '') +
+          '<span class="grp-actions">Rename &middot; ungroup</span>' +
+          '</div>';
+      }
+      prev = g;
+      h += rowHtml(it);
+    }
+    el("rows").innerHTML = h;
+    var rows = el("rows").getElementsByClassName("row");
+    for (i = 0; i < rows.length; i++) bindRow(rows[i]);
+    var heads = el("rows").getElementsByClassName("grp-head"), j;
+    for (j = 0; j < heads.length; j++) {
+      (function (head) {
+        head.onclick = function () {
+          openGroupEdit(head, head.getAttribute("data-first"),
+            head.getAttribute("data-name"));
+        };
+      })(heads[j]);
+    }
+    refreshMeta();
+  }
+
+  function refreshMeta() {
+    alignHeads();
+    var st = station();
+    el("stationName").textContent = st ? (st.name || "Unnamed checklist") : "";
+    var n = 0, i;
+    if (st) for (i = 0; i < st.items.length; i++) if (st.items[i].name) n++;
+    el("itemCount").textContent = st ? n + (n === 1 ? " task" : " tasks") : "";
+
+    var note = el("capNote");
+    if (st && n) {
+      var sheet = RSRender.runSheet(st);
+      if (sheet && sheet.clipped) {
+        note.textContent = "Too long for one page — tasks past the bottom will be cut off when printed. Split the checklist.";
+        note.className = "warn-note";
+        note.hidden = false;
+        return;
+      }
+      if (sheet && sheet.rows.length > 30) {
+        note.textContent = "Getting long — past 30 rows the print shrinks to keep one page.";
+        note.className = "soft-note";
+        note.hidden = false;
+        return;
+      }
+    }
+    note.hidden = true;
+  }
+
+  /* ---------- rename ---------- */
+
+  function startRename() {
+    var st = station();
+    if (!st) return;
+    var h2 = el("stationName");
+    var input = document.createElement("input");
+    input.className = "field rename-field";
+    input.value = st.name;
+    input.placeholder = "Checklist name";
+    h2.textContent = "";
+    h2.appendChild(input);
+    input.focus();
+    input.select();
+    function done(commit) {
+      if (commit && input.value.trim() !== st.name) {
+        ED.renameStation(st, input.value.trim());
+        persist();
+      }
+      renderTabs(); refreshMeta();
+    }
+    input.onblur = function () { done(true); };
+    input.onkeydown = function (e) {
+      if (e.key === "Enter") { input.onblur = null; done(true); }
+      if (e.key === "Escape") { input.onblur = null; done(false); }
+    };
+  }
+  el("stationName").onclick = function (e) {
+    if (e.target.tagName !== "INPUT") startRename();
+  };
+
+  /* ---------- groups ---------- */
+
+  function openGroupEdit(anchor, firstId, existing) {
+    var wrap = document.createElement("div");
+    wrap.className = "grp-head editing";
+    wrap.innerHTML =
+      '<input class="field grp-input" placeholder="Group name" value="' + RS.esc(existing) + '">' +
+      (existing
+        ? '<button type="button" class="btn small ghost grp-ungroup">Ungroup</button>'
+        : '');
+    anchor.parentNode.replaceChild(wrap, anchor);
+    var input = wrap.getElementsByClassName("grp-input")[0];
+    input.focus();
+    if (existing) input.select();
+
+    function commit(val) {
+      if (val !== null) {
+        var v = val.trim();
+        if (v) { ED.setRunGroup(station(), firstId, v); persist(); }
+        else if (existing) { ED.setRunGroup(station(), firstId, ""); persist(); }
+      }
+      renderRows();
+    }
+    input.onblur = function () { commit(input.value); };
+    input.onkeydown = function (e) {
+      if (e.key === "Enter") { input.onblur = null; commit(input.value); }
+      if (e.key === "Escape") { input.onblur = null; commit(null); }
+    };
+    var un = wrap.getElementsByClassName("grp-ungroup")[0];
+    if (un) {
+      un.onmousedown = function (e) { e.preventDefault(); };
+      un.onclick = function () {
+        input.onblur = null;
+        ED.setRunGroup(station(), firstId, "");
+        persist();
+        renderRows();
+      };
+    }
+  }
+
+  function groupFromRow(row, id) {
+    var st = station(), i, idx = -1;
+    for (i = 0; i < st.items.length; i++) if (st.items[i].id === id) { idx = i; break; }
+    if (idx < 0) return;
+    var g = st.items[idx].group || "";
+    var startsRun = g && (idx === 0 || (st.items[idx - 1].group || "") !== g);
+    if (startsRun) {
+      openGroupEdit(row.previousElementSibling, id, g);
+    } else {
+      var placeholder = document.createElement("div");
+      row.parentNode.insertBefore(placeholder, row);
+      openGroupEdit(placeholder, id, "");
+    }
+  }
+
+  /* ---------- undo ---------- */
+
+  function showUndo(text) {
+    el("undoText").textContent = text;
+    el("undoBar").className = "undo show";
+    if (undoTimer) clearTimeout(undoTimer);
+    undoTimer = setTimeout(hideUndo, 8000);
+  }
+  function hideUndo() {
+    el("undoBar").className = "undo";
+    pendingUndo = null;
+  }
+  el("undoBtn").onclick = function () {
+    if (!pendingUndo) return;
+    if (pendingUndo.kind === "item") {
+      ED.restoreItem(pendingUndo.station, pendingUndo.removed);
+    } else if (pendingUndo.kind === "station") {
+      ED.restoreStation(state, pendingUndo.removed);
+      cur = pendingUndo.removed.index;
+    }
+    persist();
+    hideUndo();
+    render();
+  };
+
+  function del(id) {
+    var st = station();
+    var removed = ED.removeItem(st, id);
+    if (!removed) return;
+    persist(); renderRows();
+    var it = removed.item;
+    if (!it.name) return;
+    pendingUndo = { kind: "item", station: st, removed: removed };
+    showUndo("Deleted “" + (it.name || "task") + "”");
+  }
+
+  /* ---------- checklist management ---------- */
+
+  function showMovedTab() {
+    var t = el("tabs").children[cur];
+    if (t && t.scrollIntoView) t.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  el("stLeft").onclick = function () {
+    if (ED.moveStation(state, cur, -1)) { cur--; persist(); renderTabs(); showMovedTab(); }
+  };
+  el("stRight").onclick = function () {
+    if (ED.moveStation(state, cur, 1)) { cur++; persist(); renderTabs(); showMovedTab(); }
+  };
+  el("stDelete").onclick = function () {
+    var st = station();
+    if (!st) return;
+    var removed = ED.removeStation(state, cur);
+    if (!removed) return;
+    pendingUndo = { kind: "station", removed: removed };
+    if (cur >= state.stations.length) cur = Math.max(0, state.stations.length - 1);
+    persist(); render();
+    showUndo("Deleted “" + (removed.station.name || "checklist") + "”");
+  };
+
+  /* ---------- menu paths ---------- */
+
+  el("menuBackBtn").onclick = function () { menuOpen = false; render(); };
+
+  el("pathBlank").onclick = function () {
+    ED.createStation(state, "");
+    cur = state.stations.length - 1;
+    menuOpen = false;
+    persist(); render(); startRename();
+  };
+
+  el("pathCapture").onclick = function () { printSheets([RSRender.blankRunSheet()]); };
+
+  /* ---------- add task ---------- */
+
+  el("addBtn").onclick = function () {
+    if (!station()) return;
+    ED.addItem(station());
+    persist(); renderRows();
+    var rows = el("rows").getElementsByClassName("row");
+    if (rows.length) rows[rows.length - 1].getElementsByClassName("f-name")[0].focus();
+  };
+
+  /* ---------- print ---------- */
+
+  function printSheets(list) {
+    store.flush();
+    var h = "", i;
+    for (i = 0; i < list.length; i++) if (list[i]) h += list[i].html;
+    el("printArea").innerHTML = h;
+    window.print();
+  }
+
+  el("printOne").onclick = function () {
+    if (station()) printSheets([RSRender.runSheet(station())]);
+  };
+  el("printAll").onclick = function () {
+    var all = [], i;
+    for (i = 0; i < state.stations.length; i++) all.push(RSRender.runSheet(state.stations[i]));
+    printSheets(all);
+  };
+  el("blankBtn").onclick = function () { printSheets([RSRender.blankRunSheet()]); };
+
+  /* ---------- save / open ---------- */
+
+  el("saveCopy").onclick = function () {
+    if (!state.stations.length) return;
+    store.flush();
+    /* one file for all four tools (6.4) — the live state is
+       handed over so this tool's copy is current even before
+       the debounce flushes */
+    RS.exportEverything("checklists-v1", state);
+    setStatus("Everything saved to your downloads");
+    setTimeout(function () { setStatus(""); }, 3000);
+  };
+
+  el("filePick").onchange = function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    RS.readBackup(f,
+      function (p) { return RS.isEverything(p) ||
+        !!(p && p.stations && p.stations.length !== undefined); },
+      function (parsed) {
+        /* a whole-site file restores every tool at once; an older
+           single-tool file still opens exactly as it always did */
+        if (RS.isEverything(parsed)) {
+          if (!window.confirm("Replace everything on this device — all your lists in all four tools — with what’s in that file?")) {
+            return;
+          }
+          var n = RS.restoreEverything(parsed);
+          state = store.load();
+          cur = 0;
+          menuOpen = false;
+          hideUndo();
+          render();
+          setStatus("Restored " + n + (n === 1 ? " tool" : " tools"));
+          setTimeout(function () { setStatus(""); }, 4000);
+          return;
+        }
+        var hasWork = false, i, j, st;
+        for (i = 0; i < state.stations.length; i++) {
+          st = state.stations[i];
+          for (j = 0; j < st.items.length; j++) if (st.items[j].name) hasWork = true;
+        }
+        if (hasWork &&
+            !window.confirm("Replace what’s on this device with the list from that file?")) {
+          return;
+        }
+        state = { stations: parsed.stations };
+        cur = 0;
+        menuOpen = false;
+        hideUndo();
+        persist();
+        render();
+      },
+      function (msg) {
+        el("storeWarn").textContent = msg +
+          " Open the .json file the tool saved — it’s named like “checklists-backup”.";
+        el("storeWarn").className = "banner show";
+      });
+    e.target.value = "";
+  };
+
+  /* ---------- boot ---------- */
+
+  if (window.CHECKLISTS_BACKUP) {
+    state = { stations: window.CHECKLISTS_BACKUP.stations };
+    render();
+    var h = "", i, s;
+    for (i = 0; i < state.stations.length; i++) {
+      s = RSRender.runSheet(state.stations[i]);
+      if (s) h += s.html;
+    }
+    el("printArea").innerHTML = h;
+  } else {
+    render();
+  }
+})();
+</script>
+</body>
+</html>

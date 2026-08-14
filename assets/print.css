@@ -1,0 +1,470 @@
+/* ==========================================================================
+   print.css — shared print layer for all ops tools
+   --------------------------------------------------------------------------
+   Extracted from pars-cards.html. These numbers were arrived at by trial
+   against Chrome's print engine. Do not "clean them up" without printing.
+
+   THE CONTRACT
+     - Screen UI lives inside .app
+     - Print output is written into #printArea
+     - Each printed page is one .sheet element
+     - A .sheet sets --rh (row height) and --fs (font size) inline, from
+       the values RSFit.fitRows() returns. See assets/fit.js.
+     - A sheet is two columns read down-then-across (SPEC §4): .cols holds
+       two .col cells, each with its own .ptable. Column one takes
+       fit.split rows; a ragged split repeats the group header in column
+       two with "(cont.)" AND its own Cook/Mgr checks — each half of a
+       split group is checked where it lives (Adam, 2026-08-07, amending
+       the one-check-per-group lock for the split case).
+     - The footer (.sheet-foot) pins to the page bottom, not to the last
+       row. A short sheet leaves white space in the middle; that is the
+       decision that makes the 0.55in row cap look deliberate.
+
+   WHY THESE NUMBERS
+     0.5in margins  Chrome triggers shrink-to-fit at tighter margins, which
+                    silently rescales the whole sheet. 0.5in is the safe floor.
+                    Users must also set Margins=Default and Scale=100.
+     9.92in height  The usable box inside 0.5in margins on Letter, minus a
+                    hair of slack. Paired with overflow:hidden so a sheet is
+                    structurally incapable of spilling onto a second page.
+                    Content overruns get clipped instead of silently
+                    reflowing — a visible failure beats an invisible one.
+     no flexbox     Chrome's print engine collapses flex layout here. Tables
+                    and block layout only inside .sheet.
+   ========================================================================== */
+
+#printArea { display: none; }
+
+@media print {
+  .app { display: none !important; }
+  #printArea { display: block !important; }
+  body { background: #FFFFFF; }
+}
+
+@page { size: letter portrait; margin: 0.5in; }
+
+/* ---------- sheet ---------- */
+
+.sheet {
+  page-break-after: always;
+  color: var(--ink);
+  --rh: 44px;
+  --fs: 15px;
+  height: 9.92in;
+  overflow: hidden;
+  position: relative; /* .sheet-foot pins to the bottom of this box */
+}
+.sheet:last-child { page-break-after: auto; }
+
+/* The tape header is gone (2026-08-07): it was background color, which
+   Chrome doesn't print by default — the wall photos show it as plain bold
+   text. Borders and weight only (locked). Its 22px display size carries
+   over to the title; the double rule replaces the tape as the header's
+   weight. */
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 6px;
+  border-bottom: 3px double var(--ink);
+  padding-bottom: 4px;
+}
+/* THE TYPE DECISION (1.3, settled deliberately, not inherited)
+   Constraint first: the printed sheet must render identically offline,
+   from file://, and on a phone — no webfont participates in print layout,
+   because a font that fails to load reflows the sheet silently (SPEC:
+   zero runtime dependencies; the Google Fonts link is screen-UI only).
+   Within that constraint, the reference posture — condensed, heavy,
+   uppercase station name over clean sans body — is reached with what's
+   installed: Arial Narrow (Windows/macOS/iOS), Roboto Condensed
+   (Android), Calibri then Arial as wide-but-present fallbacks. Condensed
+   is also what the measured column budget wants: full 15.5px items in a
+   1.70in column beat 13px items in a wider face — density where it
+   counts. A display webfont (Oswald) for the station name alone was
+   considered and declined: it buys posture the wall never printed (the
+   tape header photographed as plain bold text) at the price of ~30KB
+   inlined in the standalone build. If the printed title ever needs more
+   weight than Arial Narrow bold, that's Adam's call to fund, not a
+   quiet stack change. */
+.sheet-title {
+  font-family: "Arial Narrow", "Roboto Condensed", Calibri, "Helvetica Neue", Arial, sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+/* Pars version stamp (SPEC §4): which generation of pars this sheet was
+   printed from — not the shift DATE. Reads as a stamp under the station
+   name: small, letterspaced, no competition with the title. Restored in
+   1.5; the wall sheets carry it as "PARS GUIDE · v 2026-08-06". */
+.sheet-stamp {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  margin-top: 2px;
+}
+.sheet-meta { font-size: 10px; }
+/* the exception convention, stated on the sheet itself (SPEC §8): a
+   dash instead of initials means addressed, see notes — same reasoning
+   as the 86 line. Lives under the DATE/SHIFT line so the head budget
+   doesn't grow. */
+.sheet-legend {
+  font-size: 8.5px;
+  color: var(--steel);
+  text-align: right;
+  margin-top: 4px;
+}
+
+/* Empty circle for the SHIFT marker — border only, prints without
+   background graphics. */
+.shift-o {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  vertical-align: -1px;
+  margin: 0 2px 0 6px;
+}
+
+/* ---------- two columns ---------- */
+/* Real table display, not flex — Chrome's print engine collapses flex
+   inside the sheet (see header note), tables survive. Column budget from
+   SPEC §4, closes at exactly 3.60in: item 1.70 · par 0.40 · where 1.50.
+   Letter inside 0.5in margins is 7.5in: 3.60 + 0.30 gap + 3.60. */
+
+.cols {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+  border-spacing: 0;
+}
+.col {
+  display: table-cell;
+  vertical-align: top;
+  width: 3.60in;
+}
+.col + .col {
+  width: 3.90in;
+  padding-left: 0.30in; /* the column gap */
+}
+
+/* ---------- printed table ---------- */
+
+.ptable { width: 100%; border-collapse: collapse; table-layout: fixed; }
+
+/* Column widths — the verified budget, exactly 3.60in (SPEC §4).
+   table-layout: fixed makes the browser honor them instead of measuring
+   content, which is what lets the fit math trust that only the two known
+   `where` strings wrap.
+
+   THE TYPE THAT MAKES THE BUDGET TRUE (measured in Chromium via canvas,
+   2026-08-07, against every real string in pars-backup-grid.json; cell
+   content = column minus 2×5px padding):
+     widest one-line where, "1/6 pan · on line + under":
+       Arial Narrow 13px = 115.9px · Calibri 13px = 129.9px — fits 134px
+       Segoe UI 15.5px = 170.4px — wraps, which is what the first print
+       showed: half the sheet on two lines
+     widest item in the reference data (22 chars) at bold 15.5px:
+       Arial Narrow = 139.9px · Calibri = 150.8px — fits 153.2px
+   On a generic sans fallback the worst couple of strings wrap again;
+   render.js measures every cell for real and budgets the lines, so a
+   wide fallback costs row height, never clipped content. Do not widen
+   the padding without re-measuring. The stack matches .sheet-title's —
+   the decision and its reasoning live beside that rule. render.js
+   mirrors this stack and these widths; scripts/test.js asserts the
+   mirror. */
+.ptable {
+  font-family: "Arial Narrow", "Roboto Condensed", Calibri, "Helvetica Neue", Arial, sans-serif;
+}
+.ptable .c-item  { width: 1.70in; }
+.ptable .c-par   { width: 0.40in; }
+.ptable .c-where { width: 1.50in; }
+/* run checklist columns (5.1): task 3.20 · check 0.40, same 3.60in
+   close. Realistic task names run well under 3.20in at 15.5px — wraps
+   are budgeted by the same measurement path regardless. */
+.ptable .c-task  { width: 3.20in; }
+.ptable .c-check { width: 0.40in; }
+/* a checkbox per task (Adam's paper call, 5.1) — the same 18px box the
+   pars group rows use, centered in its cell */
+.ptable td.check { text-align: center; }
+.ptable td.check .cbox { margin-left: 0; }
+
+/* ---------- station setup sheet (6.3) ---------- */
+/* The utensils that belong at a station. Columns are the pars budget
+   exactly — 1.70 · 0.40 · 1.50 = 3.60in — so the two sheets read as
+   one family and no new width needed calibrating. */
+.utable .c-uitem  { width: 1.70in; }
+.utable .c-uqty   { width: 0.40in; }
+.utable .c-uwhere { width: 1.50in; }
+.utable td.uqty { text-align: center; font-weight: 600; }
+.utable td.uqty .wline { width: 85%; margin: 0 auto; }
+/* The count never wraps (the 6.1 round-four rule, earned on paper):
+   an unbudgeted value cell that wraps doubles its row and collides
+   with its neighbour — "1 sleeve" did exactly that on the first
+   print. A long count overhangs into padding instead. The utensil
+   name and its where ARE measured and budgeted, like the pars sheet. */
+.utable td.uqty { white-space: nowrap; }
+/* The communications log (Adam's paper call): the sheet is posted, so
+   it carries no sign-off — the space the tools don't need becomes
+   ruled lines where the crew writes what's missing or broken. Pinned
+   to the bottom of the page like every other sheet's foot; its height
+   is computed in render.js from what the list leaves. */
+.setup-log {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  border-top: 2px solid var(--ink);
+}
+.setup-log .log-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  padding: 5px 0 3px;
+}
+.setup-log .log-line {
+  height: 36px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* ---------- rotation matrix (5.2) ---------- */
+/* Task column 2.5in, occurrence columns split the remaining 5.0in
+   (7 × 0.71 / 5 × 1.00 / 12 × 0.42 — widths set inline per sheet).
+   The grid IS the borders: column separators + the row rules the
+   family already draws. An empty cell is the point — a gap must read
+   as neglect at arm's length, so nothing decorates it. */
+.mtable .c-mtask { width: 2.5in; }
+.mtable th.c-mcol {
+  text-align: center;
+  padding: 0 2px 5px;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+}
+.mtable td.mcell {
+  border-left: 1px solid var(--line-soft);
+  text-align: center;
+}
+
+/* ---------- prep sheets (6.1, SPEC §9) ---------- */
+/* Count sheet, per column half: item 1.55 · build-to 0.70 · 1x 0.65 ·
+   on-hand 0.70 — the same verified 3.60in close as pars. Build-to
+   prints deliberately (the target is a management decision the counter
+   should see); ON HAND is a marker write-in. render.js mirrors these
+   widths; the suite asserts the mirror. */
+.ptable .c-pitem { width: 1.55in; }
+.ptable .c-bto   { width: 0.70in; }
+.ptable .c-px    { width: 0.65in; }
+.ptable .c-oh    { width: 0.70in; }
+.ptable td.bto  { text-align: center; font-weight: 600; }
+.ptable td.px   { text-align: center; font-size: 13px; }
+.ptable td.oh .wline { width: 85%; margin: 0 auto; }
+/* Prep list, per column half (Adam's paper correction, 6.1 — two-up
+   so the list holds every item that needs making): item 2.45 ·
+   make 0.70 · done 0.45 = the same 3.60in close. MAKE is a multiplier
+   to the nearest quarter ("1.25x"), cook-shaped; DONE is the family's
+   18px box. */
+.ltable .c-litem { width: 2.45in; }
+.ltable .c-make  { width: 0.70in; }
+.ltable .c-done  { width: 0.45in; }
+.ltable td.make, .dtable td.make { text-align: center; font-weight: 600; }
+.ltable td.make .wline, .dtable td.make .wline { width: 70%; margin: 0 auto; }
+.ltable td.done, .dtable td.done { text-align: center; }
+.ltable td.done .cbox, .dtable td.done .cbox { margin-left: 0; }
+/* Dense register (Adam's paper verdict, 6.1 round two: the one-page
+   prep sheet passed; the count sheet prints in it for the same
+   judgment): three 2.40in columns at a 24px floor, 13px type. The §5
+   two-column lock amendment is Adam's to transcribe. */
+.dcols .col { width: 2.40in; }
+.dcols .col + .col { width: 2.55in; padding-left: 0.15in; }
+.dtable .c-litem { width: 1.60in; }
+.dtable .c-make  { width: 0.45in; }
+.dtable .c-done  { width: 0.35in; }
+.dtable td.item, .dtable td.make { font-size: 13px; }
+/* dense count sheet, per third: item 1.28 · build-to 0.34 · 1x 0.38 ·
+   on-hand 0.40 = 2.40in — the name and the write-in get the width,
+   the reference numbers drop to 11px */
+.dctable .c-pitem { width: 1.28in; }
+.dctable .c-bto   { width: 0.34in; }
+.dctable .c-px    { width: 0.38in; }
+.dctable .c-oh    { width: 0.40in; }
+.dctable td.item { font-size: 13px; }
+.dctable td.bto, .dctable td.px { font-size: 11px; }
+/* Value cells NEVER wrap (6.1 round four, found on the printed page:
+   print metrics run a fraction wider than the canvas measure, and a
+   borderline "2 pan" that fit on screen wrapped in print — a dozen
+   unbudgeted double rows pushed the column off the sheet). A value
+   that overruns by a sub-pixel overhangs invisibly into the next
+   cell's padding; a value that wraps doubles its row. The item column
+   is the only prep cell that may wrap, and it is measured. */
+.ctable td.bto, .ctable td.px,
+.dctable td.bto, .dctable td.px,
+.ltable td.make, .dtable td.make { white-space: nowrap; }
+/* Items too (Adam, round four): NOTHING on a prep sheet prints on two
+   lines — rows stay uniform and the fit stays exact. The editor caps
+   the name length so an overrun never happens silently; until then a
+   too-long name overhangs into the next cell's padding instead of
+   doubling its row. */
+.ctable td.item, .dctable td.item,
+.ltable td.item, .dtable td.item { white-space: nowrap; }
+
+/* Value-column titles get air (Adam, 6.1 round three: "build to /
+   1x = / make titles need to be less cramped"): centered over their
+   centered values on every prep table, and in the dense register they
+   drop to the matrix's 8.5px column-cap style — a deliberate small
+   cap, not an 11px label jammed into a 0.38in column. */
+.ctable th.c-bto, .ctable th.c-px, .ctable th.c-oh,
+.ltable th.c-make, .ltable th.c-done,
+.dctable th.c-bto, .dctable th.c-px, .dctable th.c-oh,
+.dtable th.c-make, .dtable th.c-done {
+  text-align: center;
+}
+.dctable th.c-bto, .dctable th.c-px, .dctable th.c-oh,
+.dtable th.c-make, .dtable th.c-done {
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+  padding: 0 2px 5px;
+  vertical-align: bottom;
+}
+
+/* Group headers read at arm's length in a dense wall (Adam, 6.1
+   round two: "if the grouping could be more readable it would help").
+   Each production block opens with the family's 3px double rule — the
+   sheet head's own rule — with air above the name. Borders and weight
+   only; scoped to the PREP tables so the paper-calibrated pars, run,
+   and matrix sheets stay byte-identical. */
+.ctable tr.grow td, .dctable tr.grow td,
+.ltable tr.grow td, .dtable tr.grow td {
+  border-top: 3px double var(--ink);
+  padding-top: 6px;
+  font-size: 12px;
+}
+/* The nothing-needed day says so instead of printing an empty grid
+   (SPEC §9) — one quiet line where the table would sit. */
+.prep-none {
+  margin-top: 0.6in;
+  text-align: center;
+  font-size: 15.5px;
+  color: var(--ink);
+}
+
+.ptable th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink);
+  border-bottom: 2px solid var(--ink);
+  padding: 0 5px 5px; /* 5px sides — part of the measured budget above */
+  font-weight: 600;
+}
+/* The spanning-header rules (Mgr initials > Day/Night) were removed with
+   the feature: the initials columns were cut for doing no work on paper. */
+
+.ptable td {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 0 5px 4px; /* 5px sides — part of the measured budget above */
+  height: var(--rh);
+  font-size: var(--fs);
+  vertical-align: bottom;
+}
+
+/* ---------- row tracking ---------- */
+/* Restored 1.4: the wall sheets had a heavier rule every fifth row and
+   the two-column rewrite dropped it — the paper test showed the eye
+   losing the row crossing from item to where. render.js counts item
+   rows only, restarting at each group, and tags every fifth with
+   .rule5. The left rule fences each group's items so a column reads as
+   blocks. Borders only — neither cue depends on background graphics. */
+.ptable tr.rule5 td { border-bottom: 1.5px solid #8A8578; }
+.ptable td.item { border-left: 1px solid var(--line-soft); }
+
+.ptable .item { font-weight: 600; }
+/* item name and par get the legibility budget — par prints as a number.
+   An item with NO par prints a write-in rule (locked, §5 amendment
+   2026-08-07): Salad printed with an entirely blank par column because
+   its pars only ever existed in marker on the wall, and a par cell with
+   nowhere to write degrades the sheet into a location list. The rule
+   sits where a printed number sits, so mixed rows stay aligned. */
+.ptable td.par { text-align: center; font-weight: 600; }
+.ptable td.par .wline { width: 85%; margin: 0 auto; }
+/* where is reference detail, not the reason the sheet exists. Fixed 13px:
+   --fs is pinned at 15.5 by the row-height floor (see fit.js), and 13px
+   is the size the measured budget above clears. */
+.ptable .where { color: #2A2823; font-size: 13px; word-wrap: break-word; }
+
+/* ---------- group header rows ---------- */
+/* Checks live here (locked): COOK and MGR on the header row, item rows
+   carry no check column — that width is already spent. A split group
+   carries the pair on both halves, including the (cont.) header (Adam,
+   2026-08-07): the cook working the right column checks where they
+   stand. A group row is one row in the fit budget like any other. */
+
+.ptable tr.grow td {
+  border-bottom: 2px solid var(--ink);
+  font-size: 11px;
+}
+.ptable tr.grow .gname {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+/* the "(cont.)" marker on a repeated header stays lowercase and unbold —
+   it's an aside, not a second group */
+.ptable tr.grow .gname .cont { text-transform: none; font-weight: 400; }
+.ptable tr.grow .gchecks {
+  text-align: right;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+
+/* empty checkbox — border only, prints without background graphics.
+   18px ≈ 0.19in, settled by Adam after seeing both extremes on paper:
+   the original 11px box was about a marker tip and a half — a check
+   fills it into a blob — and the 26px correction read too heavy. The
+   box is a target, not a container; a checkmark overflowing it is
+   normal on the wall sheets. Fits any row height, costs no capacity. */
+.cbox {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--ink);
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* ---------- footer ---------- */
+/* Pinned to the page bottom, not the last row: a short sheet leaves its
+   white space in the middle, which reads as deliberate. Budgeted at 80px
+   in fit.js (was 48 — the first paper print showed pen-sized bands a
+   marker can't use; Adam, option B, 2026-08-07). Each write-in line gets
+   a ~22px clear band above its rule; with the text line itself that's
+   ~0.35in of marker room. 2 + 22 + 14 + 24 + 14 = 76px, 4px slack. */
+
+.sheet-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-top: 2px solid var(--ink);
+}
+.foot-86 { font-size: 11px; padding-top: 22px; }
+/* the checklist's notes band occupies the same slot in the same budget */
+.foot-notes { font-size: 11px; padding-top: 22px; }
+.foot-sign {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-top: 24px;
+}
+
+/* ---------- write-in lines ---------- */
+/* Anything filled in by hand on the line prints as a dry-erase rule,
+   never as data. Data that changes on the floor does not belong in toner. */
+
+.wline { display: block; border-bottom: 1.5px solid var(--ink); height: 4px; }
+/* inline variant for header/footer write-ins (DATE, 86, sign-off) —
+   width set where it's used */
+.wline.inline { display: inline-block; height: 10px; vertical-align: baseline; }
+/* the .ini and .parcell write-in rules left with their columns: initials
+   were cut, and pars print as numbers */
+.ptable td.wide .wline { width: 96%; }

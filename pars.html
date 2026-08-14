@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pars guide generator — Line Tools</title>
+<meta name="description" content="Type your station's items, pars, and where everything lives. Print shift sheets. No account — your list stays on your device.">
+<!-- ==================================================================
+     The pars tool (2.1 editor + 2.2 first thirty seconds): empty state
+     with three paths (start blank / example / capture sheet — the
+     example NEVER auto-loads, locked §5), ambient capacity + storage
+     disclosure before any typing, list editor with order under the
+     user's control. Groups are 2.3; the site index is Phase 3.
+
+     Dev hook: a wrapper page may set window.PARS_BACKUP before scripts
+     run — it loads that data (without saving it) and renders all sheets
+     into #printArea for headless print tests. Invisible otherwise.
+     ================================================================== -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/print.css">
+<style>
+  /* editable row grid: handle · item · par · where · controls.
+     The handle and insert control are wide-screen affordances (the
+     office computer, where list maintenance lives); touch keeps the
+     arrow controls — the capability works fully without the
+     enhancement, same pattern as print shading. */
+  .app { --cols: 1.2em minmax(0, 1.4fr) 3.6em minmax(0, 1.8fr) auto; }
+  .drag-handle {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--steel-s); cursor: grab; font-size: 13px;
+    -webkit-user-select: none; user-select: none;
+  }
+  .row.dragging { opacity: 0.4; }
+  /* drop indicators are box-shadow, not border — geometry must not
+     shift under the pointer mid-drag */
+  .row.drop-before { box-shadow: 0 -3px 0 0 var(--ink-s); }
+  .row.drop-after  { box-shadow: 0 3px 0 0 var(--ink-s); }
+  .tab.drop-left  { box-shadow: -3px 0 0 0 var(--ink-s); }
+  .tab.drop-right { box-shadow: 3px 0 0 0 var(--ink-s); }
+  .danger-btn { color: var(--warn); }
+  @media (max-width: 560px) {
+    .row {
+      --cols-narrow: minmax(0, 1fr) 4.2em auto;
+      --areas-narrow: "n p c" "w w c";
+    }
+    .row .f-name  { grid-area: n; }
+    .row .f-par   { grid-area: p; }
+    .row .f-where { grid-area: w; }
+    .row .controls { grid-area: c; flex-direction: column; }
+    .drag-handle, .ins-btn { display: none; }
+  }
+  /* thumb-sized reorder/delete targets */
+  .controls .icon-btn { padding: 10px 12px; font-size: 16px; line-height: 1; }
+  /* the grouping control is a word, not a glyph (Adam, 2.4): it is the
+     discoverability hinge for the whole feature */
+  .controls .grp-btn { font-size: 13px; white-space: nowrap; }
+
+  .undo {
+    position: fixed; bottom: 12px; left: 12px; right: 12px;
+    max-width: 736px; margin: 0 auto;
+    background: var(--ink-s); color: var(--paper);
+    padding: 10px 14px;
+    display: none; justify-content: space-between; align-items: center; gap: 10px;
+    font-size: 14px;
+  }
+  .undo.show { display: flex; }
+  .undo button {
+    background: none; border: none; color: var(--paper);
+    text-decoration: underline; font-size: 14px; cursor: pointer; padding: 6px;
+  }
+  .warn-note { font-size: 13px; color: var(--warn); margin-top: 10px; }
+  .soft-note { font-size: 13px; color: var(--steel-s); margin-top: 10px; }
+
+  /* app.css gives .tabs/.data-actions display:flex, which outranks the
+     hidden attribute — make hidden mean hidden */
+  [hidden] { display: none !important; }
+
+  .open-line { font-size: 13px; color: var(--steel-s); margin-top: 16px; }
+  .open-line label { color: var(--ink-s); text-decoration: underline; cursor: pointer; }
+
+  /* group run headers in the editor — same family as the printed bars */
+  .grp-head {
+    display: flex; flex-wrap: wrap; justify-content: space-between;
+    align-items: baseline; gap: 4px 10px;
+    border-top: 2px solid var(--ink-s);
+    margin: 16px 0 8px; padding: 6px 2px 0;
+    cursor: pointer;
+  }
+  .grp-name {
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .grp-dup { font-size: 12px; color: var(--steel-s); }
+  /* visible on a phone — title attributes have no hover to live in */
+  .grp-actions { font-size: 12px; color: var(--steel-s); text-decoration: underline; margin-left: auto; }
+  /* where a group ends and ungrouped rows begin — these print with no
+     header, and the editor has to say so */
+  .grp-end {
+    border-top: 1px solid var(--line-soft);
+    margin: 16px 0 8px; padding: 6px 2px 0;
+    font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--steel-s);
+  }
+  .grp-head.editing { cursor: default; align-items: center; }
+  .grp-input { max-width: 230px; font-size: 16px; }
+
+  /* the utensils screen (6.3): handle · utensil · qty · where · controls */
+  .uheads, #utensilRows .row { --cols: 1.2em minmax(0, 1.6fr) 3.6em minmax(0, 1.4fr) auto; }
+  @media (max-width: 560px) {
+    #utensilRows .row {
+      --cols-narrow: minmax(0, 1fr) 4.2em auto;
+      --areas-narrow: "n q c" "w w c";
+    }
+    #utensilRows .row .f-uname  { grid-area: n; }
+    #utensilRows .row .f-uqty   { grid-area: q; }
+    #utensilRows .row .f-uwhere { grid-area: w; }
+  }
+
+  /* the three first-run paths */
+  .path { width: 100%; text-align: left; margin-top: 14px; padding: 14px 16px; }
+  .path-sub { font-size: 13px; color: var(--steel-s); margin-top: 5px; line-height: 1.45; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="toolnav">
+    <a class="backlink" href="index.html">&larr; Line Tools</a>
+    <span class="toolnav-x"><a href="checklists.html">Operational Checks</a> &middot; <a href="cleaning.html">Cleaning and Maintenance Checks</a> &middot; <a href="prep.html">Prep Lists</a></span>
+  </nav>
+  <div class="top">
+    <h1>Station Setup and Pars</h1>
+    <div class="save-state" id="saveState"></div>
+  </div>
+  <p class="sub">Your station&rsquo;s items, pars, and where everything lives. It saves on this device as you type.</p>
+
+  <div class="banner" id="storeWarn"></div>
+
+  <!-- first thirty seconds, and the menu you can come back to: three
+       paths, example never auto-loads. Every path ADDS — nothing here
+       can touch an existing list. -->
+  <div class="panel" id="emptyState" hidden>
+    <button class="btn ghost" id="menuBackBtn" type="button" hidden>&larr; Back to your list</button>
+    <h2>Set up your station</h2>
+    <p class="sub">A sheet fits about 30 items. Your list stays on this device &mdash;
+      nothing is sent anywhere, and you can save a copy any time.</p>
+    <button class="btn path" id="pathBlank" type="button">Start blank</button>
+    <div class="path-sub">Type in your items, pars, and where everything lives.</div>
+    <button class="btn ghost path" id="pathExample" type="button">Start from an example</button>
+    <div class="path-sub">A few rows that show the format &mdash; overwrite them with your own.</div>
+    <button class="btn ghost path" id="pathCapture" type="button">Print a blank sheet</button>
+    <div class="path-sub">Walk the station and write down what&rsquo;s actually there, then come back and type it in.</div>
+    <p class="open-line">Already have a saved list? <label for="filePick">Open it</label></p>
+  </div>
+
+  <div class="tabs" id="tabs" hidden></div>
+
+  <div class="panel" id="panel" hidden>
+    <div class="panel-head">
+      <h2 id="stationName" title="Rename"></h2>
+      <div class="head-right">
+        <span id="itemCount"></span>
+        <button type="button" class="btn small" id="utensilBtn">Utensils</button>
+        <button type="button" class="icon-btn" id="stLeft" aria-label="Move station left" title="Move station left">&#9668;</button>
+        <button type="button" class="icon-btn" id="stRight" aria-label="Move station right" title="Move station right">&#9658;</button>
+        <button type="button" class="btn small ghost danger-btn" id="stDelete">Delete station</button>
+      </div>
+    </div>
+    <div class="col-heads"><span></span><span>Item</span><span>Par</span><span>Container &middot; where</span><span></span></div>
+    <div id="rows"></div>
+    <div class="actions">
+      <button class="btn" id="addBtn" type="button">Add an item</button>
+      <button class="btn ghost" id="clearExample" type="button" hidden>Clear the example</button>
+    </div>
+    <div id="capNote" hidden></div>
+  </div>
+
+  <!-- the tools that belong at this station (6.3). Its own screen and
+       its own sheet, so the shift sheet keeps every one of its rows. -->
+  <div class="panel" id="utensilPanel" hidden>
+    <div class="panel-head">
+      <h2 id="utensilName"></h2>
+      <div class="head-right">
+        <span id="utensilCount"></span>
+        <button type="button" class="btn small ghost" id="utensilBackBtn">&larr; Back to the pars</button>
+      </div>
+    </div>
+    <p class="sub">What lives at this station, how many, and where it goes back.
+      It prints as its own sheet to post at the station.</p>
+    <div class="col-heads uheads"><span></span><span>Utensil</span><span>Qty</span><span>Where</span><span></span></div>
+    <div id="utensilRows"></div>
+    <div class="actions">
+      <button class="btn" id="addUtensilBtn" type="button">Add a utensil</button>
+    </div>
+  </div>
+
+  <div class="data-actions" id="dataActions" hidden>
+    <button class="btn ghost" id="printOne" type="button">Print this station</button>
+    <button class="btn ghost" id="printAll" type="button">Print all stations</button>
+    <button class="btn ghost" id="captureBtn" type="button">Print a blank sheet</button>
+    <button class="btn ghost" id="printSetupBtn" type="button">Print the setup sheet</button>
+    <button class="btn ghost" id="saveCopy" type="button">Save a copy of everything</button>
+    <label class="btn ghost" for="filePick">Open a saved list&hellip;</label>
+    <input class="file-input" type="file" id="filePick" accept=".json,application/json">
+  </div>
+
+  <footer class="sitefoot">
+    <span class="byline"><a href="https://studioamadeus.github.io/">Line Tools is built by Studio Amadeus</a> &mdash; so is <a href="https://boil.kitchen/">BOIL</a>, where systems live when a team outgrows paper.</span>
+    <span>Something broken or missing? <a href="mailto:support@boil.kitchen">Write to support@boil.kitchen</a></span>
+  </footer>
+
+
+</div>
+
+<div class="undo" id="undoBar">
+  <span id="undoText"></span>
+  <button type="button" id="undoBtn">Put it back</button>
+</div>
+
+<div id="printArea"></div>
+
+<script src="assets/fit.js"></script>
+<script src="assets/render.js"></script>
+<script src="assets/store.js"></script>
+<script src="assets/edit.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* The example teaches ONE thing: what goes in `where` — a container, a
+     place, and sometimes a backup. Concrete, because generic phrasing
+     teaches nothing; identifying nobody, because the reader might run a
+     taqueria (CLAUDE.md: no station names, item sets, or where strings
+     traceable to any real kitchen — revised 3.1). Pars look like real
+     pars: bread runs big, wet stuff runs small. Never auto-loaded
+     (locked). */
+  var EXAMPLE = {
+    name: "Example station",
+    items: [
+      { name: "Bread", par: "12", where: "Loaves · dry shelf" },
+      { name: "Diced onions", par: "1", where: "1/6 pan · on line + under" },
+      { name: "Shredded cheese", par: "2", where: "1/6 pan · on line + under" },
+      { name: "Mixed greens", par: "1", where: "1/3 pan · on line — backup in walk-in" },
+      { name: "Lemon wedges", par: "1", where: "1/9 pan · on line" }
+    ]
+  };
+
+  var store = RS.makeStore(
+    "pars-guides-v1",
+    function () { return { stations: [] }; },
+    function (p) { return !!(p && p.stations && p.stations.length !== undefined); }
+  );
+
+  var state = store.load();
+  var cur = 0;
+  var menuOpen = false; /* the setup menu, revisitable via + Station */
+  var pendingUndo = null; /* { kind: "item"|"station", ... } */
+  var undoTimer = null;
+
+  var el = function (id) { return document.getElementById(id); };
+
+  function setStatus(s) { el("saveState").textContent = s; }
+  function persist() { store.save(state, setStatus); }
+
+  /* ---------- storage warnings, surfaced before any typing ---------- */
+
+  if (!RS.canStore) {
+    el("storeWarn").textContent =
+      "This browser can’t save — anything you type is gone when the page closes. Printing still works.";
+    el("storeWarn").className = "banner show";
+  } else if (store.hadBadData) {
+    el("storeWarn").textContent =
+      "Couldn’t read what was saved on this device, so this is a fresh start. Your old list is kept aside, not thrown away.";
+    el("storeWarn").className = "banner show";
+  }
+
+  /* ---------- helpers ---------- */
+
+  function station() { return state.stations[cur] || null; }
+
+  function isExample(st) {
+    if (!st || st.name !== EXAMPLE.name) return false;
+    if (st.items.length !== EXAMPLE.items.length) return false;
+    for (var i = 0; i < st.items.length; i++) {
+      var a = st.items[i], b = EXAMPLE.items[i];
+      if (a.name !== b.name || a.par !== b.par || a.where !== b.where || (a.group || "") !== "") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /* ---------- rendering ---------- */
+
+  /* The utensils editor (6.3): the same mutation machinery, pointed at
+     the station's second list. Order is protected there exactly as it
+     is for items — everything still goes through edit.js. */
+  var UED = RSListEdit({
+    listKey: "utensils",
+    blankItem: function () {
+      return { id: RS.uid(), name: "", qty: "", where: "" };
+    },
+    editable: { name: true, qty: true, where: true },
+    defaultName: "Station"
+  });
+  var utensilsOpen = false;
+
+  /* absent-means-empty: every list saved before 6.3 still opens */
+  function utensilsOf(st) {
+    if (st && !st.utensils) { st.utensils = []; }
+    return st ? st.utensils : [];
+  }
+
+  function render() {
+    var empty = !state.stations.length;
+    var menu = empty || menuOpen;
+    el("emptyState").hidden = !menu;
+    el("menuBackBtn").hidden = empty; /* nothing to go back to yet */
+    el("tabs").hidden = menu;
+    el("panel").hidden = menu || utensilsOpen;
+    el("utensilPanel").hidden = menu || !utensilsOpen;
+    el("dataActions").hidden = menu;
+    if (menu) return;
+    if (cur >= state.stations.length) cur = state.stations.length - 1;
+    renderTabs();
+    if (utensilsOpen) { renderUtensils(); } else { renderRows(); }
+  }
+
+  /* ---------- utensils ---------- */
+
+  el("utensilBtn").onclick = function () { utensilsOpen = true; render(); };
+  el("utensilBackBtn").onclick = function () { utensilsOpen = false; render(); };
+
+  function utensilRowHtml(u) {
+    return '<div class="row" data-id="' + RS.esc(u.id) + '">' +
+      '<span class="drag-handle" draggable="true" title="Drag to reorder">&#10303;</span>' +
+      '<input class="field f-uname" value="' + RS.esc(u.name) + '" placeholder="Tongs" maxlength="24">' +
+      '<input class="field f-uqty" value="' + RS.esc(u.qty) + '" placeholder="2" maxlength="4">' +
+      '<input class="field f-uwhere" value="' + RS.esc(u.where) + '" placeholder="rail" maxlength="28">' +
+      '<div class="controls">' +
+        '<button type="button" class="icon-btn" data-act="up" aria-label="Move up">&#8593;</button>' +
+        '<button type="button" class="icon-btn" data-act="down" aria-label="Move down">&#8595;</button>' +
+        '<button type="button" class="icon-btn danger" data-act="del" aria-label="Delete">&#10005;</button>' +
+      '</div></div>';
+  }
+
+  var UFIELDS = { "f-uname": "name", "f-uqty": "qty", "f-uwhere": "where" };
+
+  function bindUtensilRow(row) {
+    var id = row.getAttribute("data-id");
+    var st = function () { return station(); };
+
+    var handle = row.getElementsByClassName("drag-handle")[0];
+    if (handle) {
+      handle.ondragstart = function (e) {
+        dragId = id;
+        e.dataTransfer.setData("text/plain", id);
+        e.dataTransfer.effectAllowed = "move";
+        row.className = "row dragging";
+      };
+      handle.ondragend = function () { dragId = null; renderUtensils(); };
+    }
+    row.ondragover = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      var r = row.getBoundingClientRect();
+      row.className = "row " +
+        (e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+    };
+    row.ondragleave = function () {
+      if (row.className.indexOf("drop-") >= 0) row.className = "row";
+    };
+    row.ondrop = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      var r = row.getBoundingClientRect();
+      var before = e.clientY < r.top + r.height / 2;
+      var list = utensilsOf(st()), from = -1, to = -1, k;
+      for (k = 0; k < list.length; k++) {
+        if (list[k].id === dragId) from = k;
+        if (list[k].id === id) to = k;
+      }
+      var moved = dragId;
+      dragId = null;
+      if (from < 0 || to < 0) { renderUtensils(); return; }
+      var target = before ? to : to + 1;
+      if (from < target) target--;
+      if (UED.moveItemTo(st(), moved, target)) persist();
+      renderUtensils();
+    };
+
+    var cls, input;
+    for (cls in UFIELDS) {
+      input = row.getElementsByClassName(cls)[0];
+      (function (input, field) {
+        input.oninput = function () {
+          UED.updateItem(st(), id, field, input.value);
+          persist();
+          refreshUtensilMeta();
+        };
+      })(input, UFIELDS[cls]);
+    }
+
+    var btns = row.getElementsByClassName("icon-btn"), i;
+    for (i = 0; i < btns.length; i++) {
+      (function (btn) {
+        btn.onclick = function () {
+          var act = btn.getAttribute("data-act");
+          if (act === "up" || act === "down") {
+            if (UED.moveItem(st(), id, act === "up" ? -1 : 1)) {
+              persist(); renderUtensils();
+            }
+          } else if (act === "del") {
+            var removed = UED.removeItem(st(), id);
+            if (!removed) return;
+            persist(); renderUtensils();
+            if (!removed.item.name) return;
+            pendingUndo = { kind: "utensil", station: st(), removed: removed };
+            showUndo("Deleted “" + removed.item.name + "”");
+          }
+        };
+      })(btns[i]);
+    }
+  }
+
+  function renderUtensils() {
+    var st = station();
+    var list = utensilsOf(st);
+    var h = "", i;
+    for (i = 0; i < list.length; i++) { h += utensilRowHtml(list[i]); }
+    el("utensilRows").innerHTML = h;
+    var rows = el("utensilRows").getElementsByClassName("row");
+    for (i = 0; i < rows.length; i++) bindUtensilRow(rows[i]);
+    refreshUtensilMeta();
+  }
+
+  function refreshUtensilMeta() {
+    var st = station();
+    el("utensilName").textContent = st ? (st.name || "Unnamed station") : "";
+    var list = utensilsOf(st), n = 0, i;
+    for (i = 0; i < list.length; i++) if (list[i].name) n++;
+    el("utensilCount").textContent = n + (n === 1 ? " utensil" : " utensils");
+    alignHeads();
+  }
+
+  el("addUtensilBtn").onclick = function () {
+    if (!station()) return;
+    UED.addItem(station());
+    persist(); renderUtensils();
+    var rows = el("utensilRows").getElementsByClassName("row");
+    if (rows.length) rows[rows.length - 1].getElementsByClassName("f-uname")[0].focus();
+  };
+
+  var dragStIdx = -1; /* station tab being dragged, if any */
+
+  function renderTabs() {
+    var h = "", i, s;
+    for (i = 0; i < state.stations.length; i++) {
+      s = state.stations[i];
+      h += '<button type="button" class="tab' + (i === cur ? " on" : "") +
+        '" draggable="true" data-i="' + i + '">' +
+        RS.esc(s.name || "Unnamed station") + "</button>";
+    }
+    h += '<button type="button" class="tab add" id="addStation">+ Station</button>';
+    el("tabs").innerHTML = h;
+    var btns = el("tabs").getElementsByTagName("button"), j;
+    for (j = 0; j < btns.length; j++) {
+      (function (b) {
+        b.onclick = function () {
+          if (b.id === "addStation") {
+            /* + Station opens the setup menu — blank, example, or a
+               blank sheet — instead of silently creating a station */
+            menuOpen = true;
+            render();
+          } else {
+            cur = Number(b.getAttribute("data-i")); render();
+          }
+        };
+        if (b.id === "addStation") return;
+
+        /* drag a tab to reorder stations — the placement is visible,
+           which the arrows' swap wasn't (4.1 finding). Drop position
+           measured horizontally via getBoundingClientRect. */
+        b.ondragstart = function (e) {
+          dragStIdx = Number(b.getAttribute("data-i"));
+          e.dataTransfer.setData("text/plain", String(dragStIdx));
+          e.dataTransfer.effectAllowed = "move";
+        };
+        b.ondragend = function () { dragStIdx = -1; renderTabs(); };
+        b.ondragover = function (e) {
+          var idx = Number(b.getAttribute("data-i"));
+          if (dragStIdx < 0 || dragStIdx === idx) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          var r = b.getBoundingClientRect();
+          b.className = b.className.replace(/ drop-(left|right)/g, "") +
+            (e.clientX < r.left + r.width / 2 ? " drop-left" : " drop-right");
+        };
+        b.ondragleave = function () {
+          b.className = b.className.replace(/ drop-(left|right)/g, "");
+        };
+        b.ondrop = function (e) {
+          var idx = Number(b.getAttribute("data-i"));
+          if (dragStIdx < 0 || dragStIdx === idx) return;
+          e.preventDefault();
+          var r = b.getBoundingClientRect();
+          var before = e.clientX < r.left + r.width / 2;
+          var target = before ? idx : idx + 1;
+          if (dragStIdx < target) target--;
+          var focused = state.stations[cur];
+          if (RSEdit.moveStationTo(state, dragStIdx, target)) {
+            cur = state.stations.indexOf(focused);
+            persist();
+          }
+          dragStIdx = -1;
+          renderTabs();
+        };
+      })(btns[j]);
+    }
+  }
+
+  function rowHtml(it) {
+    return '<div class="row" data-id="' + RS.esc(it.id) + '">' +
+      '<span class="drag-handle" draggable="true" title="Drag to reorder">&#10303;</span>' +
+      '<input class="field f-name" value="' + RS.esc(it.name) + '" placeholder="Item">' +
+      '<input class="field f-par" value="' + RS.esc(it.par) + '" placeholder="Par" inputmode="numeric">' +
+      '<input class="field f-where" value="' + RS.esc(it.where) + '" placeholder="1/6 pan &middot; on line">' +
+      '<div class="controls">' +
+        '<button type="button" class="icon-btn" data-act="up" aria-label="Move up">&#8593;</button>' +
+        '<button type="button" class="icon-btn" data-act="down" aria-label="Move down">&#8595;</button>' +
+        '<button type="button" class="icon-btn grp-btn" data-act="grp">+ Group</button>' +
+        '<button type="button" class="icon-btn ins-btn" data-act="ins" aria-label="Add an item below" title="Add an item below">+</button>' +
+        '<button type="button" class="icon-btn danger" data-act="del" aria-label="Delete">&#10005;</button>' +
+      '</div></div>';
+  }
+
+  var dragId = null; /* item being dragged, if any */
+
+  function bindRow(row) {
+    var id = row.getAttribute("data-id");
+
+    /* drag to reorder — the same operation as the arrows with a longer
+       reach; desktop-first, arrows unchanged for touch. Drop position
+       comes from getBoundingClientRect, not guesswork. */
+    var handle = row.getElementsByClassName("drag-handle")[0];
+    if (handle) {
+      handle.ondragstart = function (e) {
+        dragId = id;
+        e.dataTransfer.setData("text/plain", id);
+        e.dataTransfer.effectAllowed = "move";
+        row.className = "row dragging";
+      };
+      handle.ondragend = function () { dragId = null; renderRows(); };
+    }
+    row.ondragover = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      var r = row.getBoundingClientRect();
+      row.className = "row " +
+        (e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+    };
+    row.ondragleave = function () {
+      if (row.className.indexOf("drop-") >= 0) row.className = "row";
+    };
+    row.ondrop = function (e) {
+      if (!dragId || dragId === id) return;
+      e.preventDefault();
+      var r = row.getBoundingClientRect();
+      var before = e.clientY < r.top + r.height / 2;
+      var st = station(), from = -1, to = -1, k;
+      for (k = 0; k < st.items.length; k++) {
+        if (st.items[k].id === dragId) from = k;
+        if (st.items[k].id === id) to = k;
+      }
+      var moved = dragId;
+      dragId = null;
+      if (from < 0 || to < 0) { renderRows(); return; }
+      var target = before ? to : to + 1;
+      if (from < target) target--;
+      if (RSEdit.moveItemTo(st, moved, target)) persist();
+      renderRows();
+    };
+
+    var inputs = { name: "f-name", par: "f-par", where: "f-where" }, f;
+    for (f in inputs) {
+      (function (field) {
+        var input = row.getElementsByClassName(inputs[field])[0];
+        input.oninput = function () {
+          RSEdit.updateItem(station(), id, field, input.value);
+          persist();
+          refreshMeta();
+        };
+      })(f);
+    }
+    var btns = row.getElementsByClassName("icon-btn"), i;
+    for (i = 0; i < btns.length; i++) {
+      (function (btn) {
+        btn.onclick = function () {
+          var act = btn.getAttribute("data-act");
+          if (act === "up" || act === "down") {
+            if (RSEdit.moveItem(station(), id, act === "up" ? -1 : 1)) {
+              persist(); renderRows();
+            }
+          } else if (act === "grp") {
+            groupFromRow(row, id);
+          } else if (act === "ins") {
+            var added = RSEdit.insertItemAfter(station(), id);
+            if (added) {
+              persist(); renderRows();
+              var nr = el("rows").querySelector('[data-id="' + added.id + '"]');
+              if (nr) nr.getElementsByClassName("f-name")[0].focus();
+            }
+          } else if (act === "del") { del(id); }
+        };
+      })(btns[i]);
+    }
+  }
+
+  /* The headings and the rows are separate grids sharing --cols, so
+     the auto and fr tracks resolve against different content and the
+     headings drift off the fields (Adam, 6.2 fix — the same lesson as
+     every geometry bug in this project: measure, never eyeball). Copy
+     the first row's USED track sizes onto the headings — exact on any
+     device, self-healing on resize. */
+  function alignHeads() {
+    /* both screens: each heading row copies its own rows' used tracks */
+    var pairs = [["col-heads", "rows"], ["uheads", "utensilRows"]];
+    for (var p = 0; p < pairs.length; p++) {
+      var heads = document.getElementsByClassName(pairs[p][0])[0];
+      var box = el(pairs[p][1]);
+      if (!heads || !box) { continue; }
+      var row = box.getElementsByClassName("row")[0];
+      heads.style.gridTemplateColumns =
+        row ? getComputedStyle(row).gridTemplateColumns : "";
+    }
+  }
+  window.addEventListener("resize", alignHeads);
+
+  function renderRows() {
+    var st = station();
+    var h = "", i, it, g, prev = null;
+    if (!st) { el("rows").innerHTML = ""; refreshMeta(); return; }
+
+    /* run headers render where the sheet will print them; a name heading
+       more than one run is stated as a fact beside each of its headers —
+       two areas may genuinely share a name, so nothing is auto-fixed.
+       Matching is case/space-insensitive (folded): "Low boy" and
+       "low boy" display identically in uppercase, and that invisible
+       difference cost a (cont.) on paper in the 2.4 smoke test. */
+    var dups = {}, dupList = RSEdit.splitRunNames(st), runs = RSEdit.runsOf(st), d;
+    for (d = 0; d < dupList.length; d++) {
+      var places = 0;
+      for (i = 0; i < runs.length; i++) {
+        if (RSEdit.foldGroup(runs[i].name) === dupList[d]) places++;
+      }
+      dups[dupList[d]] = places;
+    }
+
+    for (i = 0; i < st.items.length; i++) {
+      it = st.items[i];
+      g = it.group || "";
+      /* A group's END must be visible (2.4 phone finding): items added
+         after grouping are appended ungrouped, and without a boundary
+         they sit under the last header looking like members of it —
+         then print without a header or (cont.) and read as a broken
+         split. The sheet was honest; the editor wasn't. */
+      if (!g && prev) {
+        h += '<div class="grp-end">No group</div>';
+      }
+      if (g && g !== prev) {
+        h += '<div class="grp-head" data-first="' + RS.esc(it.id) +
+          '" data-name="' + RS.esc(g) + '">' +
+          '<span class="grp-name">' + RS.esc(g) + '</span>' +
+          (dups[RSEdit.foldGroup(g)]
+            ? '<span class="grp-dup">&ldquo;' + RS.esc(g) + '&rdquo; prints in ' +
+              dups[RSEdit.foldGroup(g)] + ' places</span>'
+            : '') +
+          '<span class="grp-actions">Rename &middot; ungroup</span>' +
+          '</div>';
+      }
+      prev = g;
+      h += rowHtml(it);
+    }
+    el("rows").innerHTML = h;
+    var rows = el("rows").getElementsByClassName("row");
+    for (i = 0; i < rows.length; i++) bindRow(rows[i]);
+    var heads = el("rows").getElementsByClassName("grp-head"), j;
+    for (j = 0; j < heads.length; j++) {
+      (function (head) {
+        head.onclick = function () {
+          openGroupEdit(head, head.getAttribute("data-first"),
+            head.getAttribute("data-name"));
+        };
+      })(heads[j]);
+    }
+    refreshMeta();
+  }
+
+  /* ---------- group editing (2.3) ---------- */
+  /* One gesture: naming an item's run flows forward through everything
+     sharing its current group (RSEdit.setRunGroup). Nothing reorders. */
+
+  function openGroupEdit(anchor, firstId, existing) {
+    var wrap = document.createElement("div");
+    wrap.className = "grp-head editing";
+    wrap.innerHTML =
+      '<input class="field grp-input" placeholder="Group name" value="' + RS.esc(existing) + '">' +
+      (existing
+        ? '<button type="button" class="btn small ghost grp-ungroup">Ungroup</button>'
+        : '');
+    anchor.parentNode.replaceChild(wrap, anchor);
+    var input = wrap.getElementsByClassName("grp-input")[0];
+    input.focus();
+    if (existing) input.select();
+
+    function commit(val) {
+      if (val !== null) {
+        var v = val.trim();
+        if (v) { RSEdit.setRunGroup(station(), firstId, v); persist(); }
+        else if (existing) { RSEdit.setRunGroup(station(), firstId, ""); persist(); }
+      }
+      renderRows();
+    }
+    input.onblur = function () { commit(input.value); };
+    input.onkeydown = function (e) {
+      if (e.key === "Enter") { input.onblur = null; commit(input.value); }
+      if (e.key === "Escape") { input.onblur = null; commit(null); }
+    };
+    var un = wrap.getElementsByClassName("grp-ungroup")[0];
+    if (un) {
+      un.onmousedown = function (e) { e.preventDefault(); }; /* keep input's blur out of the race */
+      un.onclick = function () {
+        input.onblur = null;
+        RSEdit.setRunGroup(station(), firstId, "");
+        persist();
+        renderRows();
+      };
+    }
+  }
+
+  /* ¶ on a row: if the item heads a named run, edit that run's header;
+     otherwise start a new group here. */
+  function groupFromRow(row, id) {
+    var st = station(), i, idx = -1;
+    for (i = 0; i < st.items.length; i++) if (st.items[i].id === id) { idx = i; break; }
+    if (idx < 0) return;
+    var g = st.items[idx].group || "";
+    var startsRun = g && (idx === 0 || (st.items[idx - 1].group || "") !== g);
+    if (startsRun) {
+      openGroupEdit(row.previousElementSibling, id, g);
+    } else {
+      var placeholder = document.createElement("div");
+      row.parentNode.insertBefore(placeholder, row);
+      openGroupEdit(placeholder, id, "");
+    }
+  }
+
+  function refreshMeta() {
+    alignHeads();
+    var st = station();
+    /* fallback is only reachable via imported files with blank names —
+       never positional, which lied under reordering (4.1) */
+    el("stationName").textContent = st ? (st.name || "Unnamed station") : "";
+    el("clearExample").hidden = !isExample(st);
+    var n = 0, i;
+    if (st) for (i = 0; i < st.items.length; i++) if (st.items[i].name) n++;
+    el("itemCount").textContent = st ? n + (n === 1 ? " item" : " items") : "";
+
+    /* Capacity is ambient: a count, then a nudge past 30 rows, then the
+       hard warning — all while typing, never first at the print dialog. */
+    var note = el("capNote");
+    if (st && n) {
+      var sheet = RSRender.shiftSheet(st);
+      if (sheet && sheet.clipped) {
+        note.textContent = "Too long for one page — items past the bottom will be cut off when printed. Split the station.";
+        note.className = "warn-note";
+        note.hidden = false;
+        return;
+      }
+      if (sheet && sheet.rows.length > 30) {
+        note.textContent = "Getting long — past 30 rows the print shrinks to keep one page.";
+        note.className = "soft-note";
+        note.hidden = false;
+        return;
+      }
+    }
+    note.hidden = true;
+  }
+
+  /* ---------- station rename (tap the name) ---------- */
+
+  function startRename() {
+    var st = station();
+    if (!st) return;
+    var h2 = el("stationName");
+    var input = document.createElement("input");
+    input.className = "field rename-field";
+    input.value = st.name;
+    input.placeholder = "Station name";
+    h2.textContent = "";
+    h2.appendChild(input);
+    input.focus();
+    input.select(); /* a default name should be one keystroke to replace */
+    function done(commit) {
+      if (commit && input.value.trim() !== st.name) {
+        RSEdit.renameStation(st, input.value.trim());
+        persist();
+      }
+      renderTabs(); refreshMeta();
+    }
+    input.onblur = function () { done(true); };
+    input.onkeydown = function (e) {
+      if (e.key === "Enter") { input.onblur = null; done(true); }
+      if (e.key === "Escape") { input.onblur = null; done(false); }
+    };
+  }
+  el("stationName").onclick = function (e) {
+    if (e.target.tagName !== "INPUT") startRename();
+  };
+
+  /* ---------- undo (items and the example station) ---------- */
+
+  function showUndo(text) {
+    el("undoText").textContent = text;
+    el("undoBar").className = "undo show";
+    if (undoTimer) clearTimeout(undoTimer);
+    undoTimer = setTimeout(hideUndo, 8000);
+  }
+
+  function hideUndo() {
+    el("undoBar").className = "undo";
+    pendingUndo = null;
+  }
+
+  el("undoBtn").onclick = function () {
+    if (!pendingUndo) return;
+    if (pendingUndo.kind === "item") {
+      RSEdit.restoreItem(pendingUndo.station, pendingUndo.removed);
+    } else if (pendingUndo.kind === "utensil") {
+      UED.restoreItem(pendingUndo.station, pendingUndo.removed);
+    } else if (pendingUndo.kind === "station") {
+      RSEdit.restoreStation(state, pendingUndo.removed);
+      cur = pendingUndo.removed.index;
+    }
+    persist();
+    hideUndo();
+    render();
+  };
+
+  function del(id) {
+    var st = station();
+    var removed = RSEdit.removeItem(st, id);
+    if (!removed) return;
+    persist(); renderRows();
+    var it = removed.item;
+    if (!it.name && !it.par && !it.where) return; /* empty row, nothing to mourn */
+    pendingUndo = { kind: "item", station: st, removed: removed };
+    showUndo("Deleted “" + (it.name || "item") + "”");
+  }
+
+  /* ---------- first-run paths ---------- */
+
+  el("menuBackBtn").onclick = function () {
+    menuOpen = false;
+    render();
+  };
+
+  /* ---------- station management (4.1) ---------- */
+
+  /* after an arrow move, bring the moved tab into view — on a phone the
+     tab row scrolls, and a swap that happens off-screen reads as nothing */
+  function showMovedTab() {
+    var t = el("tabs").children[cur];
+    if (t && t.scrollIntoView) t.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  el("stLeft").onclick = function () {
+    if (RSEdit.moveStation(state, cur, -1)) { cur--; persist(); renderTabs(); showMovedTab(); }
+  };
+  el("stRight").onclick = function () {
+    if (RSEdit.moveStation(state, cur, 1)) { cur++; persist(); renderTabs(); showMovedTab(); }
+  };
+  el("stDelete").onclick = function () {
+    var st = station();
+    if (!st) return;
+    var removed = RSEdit.removeStation(state, cur);
+    if (!removed) return;
+    pendingUndo = { kind: "station", removed: removed };
+    if (cur >= state.stations.length) cur = Math.max(0, state.stations.length - 1);
+    persist(); render();
+    showUndo("Deleted “" + (removed.station.name || "station") + "”");
+  };
+
+  el("pathBlank").onclick = function () {
+    RSEdit.createStation(state, "");
+    cur = state.stations.length - 1;
+    menuOpen = false;
+    persist(); render(); startRename();
+  };
+
+  el("pathExample").onclick = function () {
+    var st = RSEdit.createStation(state, EXAMPLE.name);
+    st.items = [];
+    for (var i = 0; i < EXAMPLE.items.length; i++) {
+      var ex = EXAMPLE.items[i];
+      st.items.push({ id: RS.uid(), name: ex.name, par: ex.par, where: ex.where, group: "" });
+    }
+    st.updatedAt = null; /* nothing edited yet — no pars version */
+    cur = state.stations.length - 1;
+    menuOpen = false;
+    persist(); render();
+  };
+
+  el("pathCapture").onclick = function () { printSheets([RSRender.captureSheet()]); };
+
+  /* Clearing the example is its own action and can never touch real
+     work: the button exists only while the station still matches the
+     example exactly — one keystroke makes it yours and the button goes. */
+  el("clearExample").onclick = function () {
+    if (!isExample(station())) return;
+    var removed = RSEdit.removeStation(state, cur);
+    if (!removed) return;
+    pendingUndo = { kind: "station", removed: removed };
+    persist(); render();
+    showUndo("Cleared the example");
+  };
+
+  /* ---------- add item ---------- */
+
+  el("addBtn").onclick = function () {
+    if (!station()) return;
+    RSEdit.addItem(station());
+    persist(); renderRows();
+    var rows = el("rows").getElementsByClassName("row");
+    if (rows.length) rows[rows.length - 1].getElementsByClassName("f-name")[0].focus();
+  };
+
+  /* ---------- print ---------- */
+
+  function printSheets(list) {
+    store.flush(); /* the dialog may background the page */
+    var h = "", i;
+    for (i = 0; i < list.length; i++) if (list[i]) h += list[i].html;
+    el("printArea").innerHTML = h;
+    window.print();
+  }
+
+  el("printOne").onclick = function () {
+    if (station()) printSheets([RSRender.shiftSheet(station())]);
+  };
+  el("printAll").onclick = function () {
+    var all = [], i;
+    for (i = 0; i < state.stations.length; i++) all.push(RSRender.shiftSheet(state.stations[i]));
+    printSheets(all);
+  };
+  el("captureBtn").onclick = function () { printSheets([RSRender.captureSheet()]); };
+  /* the station's tools, on their own posted sheet (6.3). With none
+     entered yet, the blank capture sheet is the honest answer — walk
+     the station and write them down. */
+  el("printSetupBtn").onclick = function () {
+    var st = station();
+    if (!st) return;
+    var sheet = RSRender.setupSheet(st);
+    printSheets([sheet || RSRender.blankSetupSheet()]);
+  };
+
+  /* ---------- save a copy / open a saved list ---------- */
+
+  el("saveCopy").onclick = function () {
+    if (!state.stations.length) return;
+    store.flush();
+    /* one file for all four tools (6.4) — the live state is
+       handed over so this tool's copy is current even before
+       the debounce flushes */
+    RS.exportEverything("pars-guides-v1", state);
+    setStatus("Everything saved to your downloads");
+    setTimeout(function () { setStatus(""); }, 3000);
+  };
+
+  el("filePick").onchange = function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    RS.readBackup(f,
+      function (p) { return RS.isEverything(p) ||
+        !!(p && p.stations && p.stations.length !== undefined); },
+      function (parsed) {
+        /* a whole-site file restores every tool at once; an older
+           single-tool file still opens exactly as it always did */
+        if (RS.isEverything(parsed)) {
+          if (!window.confirm("Replace everything on this device — all your lists in all four tools — with what’s in that file?")) {
+            return;
+          }
+          var n = RS.restoreEverything(parsed);
+          state = store.load();
+          cur = 0;
+          menuOpen = false;
+          utensilsOpen = false;
+          hideUndo();
+          render();
+          setStatus("Restored " + n + (n === 1 ? " tool" : " tools"));
+          setTimeout(function () { setStatus(""); }, 4000);
+          return;
+        }
+        var hasWork = false, i, j, st;
+        for (i = 0; i < state.stations.length; i++) {
+          st = state.stations[i];
+          for (j = 0; j < st.items.length; j++) if (st.items[j].name) hasWork = true;
+        }
+        if (hasWork &&
+            !window.confirm("Replace what’s on this device with the list from that file?")) {
+          return;
+        }
+        state = { stations: parsed.stations };
+        cur = 0;
+        menuOpen = false;
+        hideUndo();
+        persist();
+        render();
+      },
+      function (msg) {
+        el("storeWarn").textContent = msg +
+          " Open the .json file the tool saved — it’s named like “pars-backup”.";
+        el("storeWarn").className = "banner show";
+      });
+    e.target.value = "";
+  };
+
+  /* ---------- boot ---------- */
+
+  if (window.PARS_BACKUP) {
+    /* dev hook: load without saving, render every sheet for print tests */
+    state = { stations: window.PARS_BACKUP.stations };
+    render();
+    var h = "", i, s;
+    for (i = 0; i < state.stations.length; i++) {
+      s = RSRender.shiftSheet(state.stations[i]);
+      if (s) h += s.html;
+    }
+    el("printArea").innerHTML = h;
+  } else {
+    render();
+  }
+})();
+</script>
+</body>
+</html>

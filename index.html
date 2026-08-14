@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Line Tools by BOIL — pars guides, prep lists, checklists, and cleaning schedules</title>
+<meta name="description" content="Four tools that print sheets for the kitchen: pars guides, prep lists, opening and closing checklists, and cleaning and maintenance checks. No account — your lists stay on your device.">
+<!-- ==================================================================
+     The landing page (3.2, grown to three tools in 5.3). Still zero
+     scripts of any kind — every sheet below is pre-rendered by the
+     same generator the suite runs, and scripts/test.js asserts each
+     stays byte-identical with its fixture. No analytics (locked,
+     SPEC §5): the trust claim on this page depends on it being true,
+     and view-source is part of the page.
+     ================================================================== -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/print.css">
+<style>
+  .land { max-width: 1080px; margin: 0 auto; padding: 32px 14px 60px; }
+  /* Masthead + colophon carry a 3px double rule — the studio page
+     frame (maritime colonial pass). It appears in exactly these two
+     places and nowhere else. */
+  .land h1 {
+    font-size: 28px; font-weight: 600; margin: 0 0 18px;
+    padding-bottom: 12px; border-bottom: 3px double var(--line-soft);
+  }
+  .land .lede { font-size: 16px; color: var(--ink-s); margin: 0 0 28px; line-height: 1.5; max-width: 640px; }
+
+  /* BOIL's bubble wordmark, sized to the masthead line. The bubbles
+     rise from the bottom of the letters and fade on non-harmonic
+     cycles — same figures as boil.kitchen's hero. */
+  /* the letters carry BOIL's accent — the same #cc5500 the marketing
+     hero paints them with (its svg runs text-accent, not ink) */
+  .boil-mark { height: 1.05em; width: auto; vertical-align: -0.18em; color: #cc5500; }
+  .bubble-v2 {
+    fill: url(#bubble-glow-v2);
+    opacity: 0;
+    animation-name: bubble-rise-v2;
+    animation-timing-function: ease-out;
+    animation-iteration-count: infinite;
+  }
+  .bubble-v2-1  { animation-duration: 3.5s; animation-delay:  0s;   }
+  .bubble-v2-2  { animation-duration: 4.5s; animation-delay: -1s;   }
+  .bubble-v2-3  { animation-duration:   3s; animation-delay: -2s;   }
+  .bubble-v2-4  { animation-duration:   5s; animation-delay: -0.5s; }
+  .bubble-v2-5  { animation-duration:   4s; animation-delay: -2.5s; }
+  .bubble-v2-6  { animation-duration:   6s; animation-delay: -3.5s; }
+  .bubble-v2-7  { animation-duration: 3.5s; animation-delay: -1.5s; }
+  .bubble-v2-8  { animation-duration: 4.5s; animation-delay: -2.8s; }
+  .bubble-v2-9  { animation-duration:   5s; animation-delay: -3.2s; }
+  .bubble-v2-10 { animation-duration:   3s; animation-delay: -1.2s; }
+  .bubble-v2-11 { animation-duration:   4s; animation-delay: -0.8s; }
+  .bubble-v2-12 { animation-duration: 5.5s; animation-delay: -2.2s; }
+  @keyframes bubble-rise-v2 {
+    0%   { opacity: 0;   transform: translateY(0);   }
+    10%  { opacity: 1;   }
+    60%  { opacity: 0.9; }
+    100% { opacity: 0;   transform: translateY(-90px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bubble-v2 { animation: none; opacity: 0.5; }
+  }
+
+  /* three tools, equal footing: name, one line, the printed sheet
+     itself, one way in each. Three across on a desk, stacked on a
+     device. */
+  .tools { display: grid; grid-template-columns: 1fr; gap: 36px; margin: 0 0 32px; }
+  .tool { display: flex; flex-direction: column; }
+  .tool h2 { font-size: 19px; font-weight: 600; margin: 0 0 4px; }
+  .tool .tsub { font-size: 14px; color: var(--ink-s); line-height: 1.5; margin: 0 0 12px; }
+  .tool .way-in { text-align: center; margin: 14px 0 0; }
+  .tool .btn { display: inline-block; text-decoration: none; font-size: 15px; padding: 12px 22px; }
+
+  /* the sheet, shown whole before anyone is asked to do anything — the
+     shape is the pitch: a pars sheet, a run list, and a matrix are
+     visibly different at a glance. Fixed-step scaling; no script may
+     compute it. The sheet gets no padding (true to print); the frame
+     owns the gutter. */
+  .pv-frame {
+    --pv: 0.55;
+    /* content-box, deliberately: app.css sets border-box on everything,
+       which made this width swallow its own padding and clip the sheet's
+       right edge by 26px (found on Adam's device, confirmed by
+       measurement). The 2px is sub-pixel rounding slack. */
+    box-sizing: content-box;
+    width: calc(720px * var(--pv) + 2px);
+    height: calc(952px * var(--pv) + 2px);
+    padding: 12px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    background: var(--white);
+    margin: 0 auto;
+  }
+  .pv-frame .sheet {
+    width: 720px;
+    transform: scale(var(--pv));
+    transform-origin: top left;
+    background: var(--white);
+  }
+  @media (min-width: 1100px) {
+    .tools { grid-template-columns: repeat(2, 1fr); gap: 28px 24px; }
+    .tools .pv-frame { --pv: 0.5; }
+    .tool .way-in { margin-top: auto; padding-top: 14px; }
+  }
+  @media (max-width: 700px) { .pv-frame { --pv: 0.5; } }
+  @media (max-width: 480px) { .pv-frame { --pv: 0.41; } }
+  @media (max-width: 380px) { .pv-frame { --pv: 0.36; } }
+
+  .plain { list-style: none; padding: 0; margin: 0 0 28px; }
+  .plain li { font-size: 15px; line-height: 1.6; padding-left: 1.1em; text-indent: -1.1em; }
+  .plain li::before { content: "— "; color: var(--steel-s); }
+
+  .land footer {
+    border-top: 3px double var(--line-soft);
+    padding-top: 14px;
+    font-size: 13px; color: var(--steel-s);
+    display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  }
+  .land footer a { color: var(--ink-s); }
+  /* The byline is an aside that happens to be a door — italic, muted,
+     no underline; the support link beside it keeps the loud treatment. */
+  .land footer .byline a { color: var(--steel-s); font-style: italic; text-decoration: none; }
+  .land footer .byline a:hover { color: var(--ink-s); }
+</style>
+</head>
+<body>
+<div class="land">
+  <h1>Line Tools by
+    <!-- BOIL's bubble wordmark, carried over from boil.kitchen
+         (Adam's call): the letterforms clip a dozen gradient bubbles
+         rising on non-harmonic cycles. Inline SVG + CSS animation —
+         still zero scripts, nothing loaded from anywhere. -->
+    <svg class="boil-mark" viewBox="0 0 280 100" preserveAspectRatio="xMidYMid meet" role="img" aria-label="BOIL">
+      <defs>
+        <clipPath id="boil-clip-v2">
+          <text x="140" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="100" letter-spacing="-3">BOIL</text>
+        </clipPath>
+        <radialGradient id="bubble-glow-v2" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="#ffffff" stop-opacity="1"    />
+          <stop offset="35%"  stop-color="#ffd966" stop-opacity="0.95" />
+          <stop offset="70%"  stop-color="#ee7a30" stop-opacity="0.85" />
+          <stop offset="100%" stop-color="#cc5500" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <text x="140" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="100" letter-spacing="-3" fill="currentColor">BOIL</text>
+      <g clip-path="url(#boil-clip-v2)">
+        <circle class="bubble-v2 bubble-v2-1"  cx="42"  cy="92" r="5"   />
+        <circle class="bubble-v2 bubble-v2-2"  cx="60"  cy="92" r="3.5" />
+        <circle class="bubble-v2 bubble-v2-3"  cx="78"  cy="92" r="4.5" />
+        <circle class="bubble-v2 bubble-v2-4"  cx="96"  cy="92" r="5.5" />
+        <circle class="bubble-v2 bubble-v2-5"  cx="114" cy="92" r="4"   />
+        <circle class="bubble-v2 bubble-v2-6"  cx="130" cy="92" r="6"   />
+        <circle class="bubble-v2 bubble-v2-7"  cx="148" cy="92" r="4"   />
+        <circle class="bubble-v2 bubble-v2-8"  cx="168" cy="92" r="5"   />
+        <circle class="bubble-v2 bubble-v2-9"  cx="188" cy="92" r="4.5" />
+        <circle class="bubble-v2 bubble-v2-10" cx="208" cy="92" r="5.5" />
+        <circle class="bubble-v2 bubble-v2-11" cx="226" cy="92" r="4"   />
+        <circle class="bubble-v2 bubble-v2-12" cx="244" cy="92" r="5"   />
+      </g>
+    </svg>
+  </h1>
+  <p class="lede">Type a list, print the sheet, fill it in with a marker, and file it
+    &mdash; so nobody has to run the kitchen from memory.</p>
+
+  <div class="tools">
+    <section class="tool">
+      <h2>Prep Lists</h2>
+      <p class="tsub">Count what&rsquo;s on hand and print what to make &mdash;
+        as a multiplier of the batch recipe.</p>
+      <div class="pv-frame">
+<!-- pv:prep --><div class="sheet" style="--rh:53px;--fs:15.5px"><div class="sheet-head"><div><div class="sheet-title">Prep list</div><div class="sheet-stamp">PREP</div></div><div class="sheet-meta">DATE <span class="wline inline" style="width:1.6in"></span></div></div><div class="cols"><div class="col"><table class="ptable ltable"><thead><tr><th class="c-litem">Item</th><th class="c-make">Make</th><th class="c-done">Done</th></tr></thead><tbody><tr class="grow"><td class="gname" colspan="3">Daily · Fresh · Breakfast</td></tr><tr><td class="item">Chicken noodle</td><td class="make">1.5x</td><td class="done"><span class="cbox"></span></td></tr><tr><td class="item">Pancake batter</td><td class="make">1x</td><td class="done"><span class="cbox"></span></td></tr><tr><td class="item">Fruit salad</td><td class="make">1.25x</td><td class="done"><span class="cbox"></span></td></tr></tbody></table></div><div class="col"><table class="ptable ltable"><thead><tr><th class="c-litem">Item</th><th class="c-make">Make</th><th class="c-done">Done</th></tr></thead><tbody><tr class="grow"><td class="gname" colspan="3">Sauces · Dressings</td></tr><tr><td class="item">Ranch</td><td class="make">2x</td><td class="done"><span class="cbox"></span></td></tr><tr><td class="item">BBQ sauce</td><td class="make">0.75x</td><td class="done"><span class="cbox"></span></td></tr></tbody></table></div></div><div class="sheet-foot"><div class="foot-notes">NOTES: <span class="wline inline" style="width:6.1in"></span></div><div class="foot-sign">Verified by <span class="wline inline" style="width:2.5in"></span></div></div></div><!-- /pv:prep -->
+      </div>
+      <div class="way-in"><a class="btn" href="prep.html">Open Prep Lists</a></div>
+    </section>
+
+    <section class="tool">
+      <h2>Station Setup and Pars</h2>
+      <p class="tsub">Your station&rsquo;s items, pars, and where everything lives &mdash;
+        shift sheets for openers and closers.</p>
+      <div class="pv-frame">
+<!-- pv:pars --><div class="sheet" style="--rh:53px;--fs:15.5px"><div class="sheet-head"><div><div class="sheet-title">Example station</div><div class="sheet-stamp">PARS GUIDE</div></div><div class="sheet-meta">DATE <span class="wline inline" style="width:1.1in"></span> &nbsp;SHIFT <span class="shift-o"></span>AM <span class="shift-o"></span>PM</div></div><div class="cols"><div class="col"><table class="ptable"><thead><tr><th class="c-item">Item</th><th class="c-par">Par</th><th class="c-where">Container &middot; Where</th></tr></thead><tbody><tr><td class="item">Bread</td><td class="par">12</td><td class="where">Loaves · dry shelf</td></tr><tr><td class="item">Diced onions</td><td class="par">1</td><td class="where">1/6 pan · on line + under</td></tr><tr><td class="item">Shredded cheese</td><td class="par">2</td><td class="where">1/6 pan · on line + under</td></tr></tbody></table></div><div class="col"><table class="ptable"><thead><tr><th class="c-item">Item</th><th class="c-par">Par</th><th class="c-where">Container &middot; Where</th></tr></thead><tbody><tr><td class="item">Mixed greens</td><td class="par">1</td><td class="where">1/3 pan · on line — backup in walk-in</td></tr><tr class="rule5"><td class="item">Lemon wedges</td><td class="par">1</td><td class="where">1/9 pan · on line</td></tr></tbody></table></div></div><div class="sheet-foot"><div class="foot-86">86 / couldn’t stock: <span class="wline inline" style="width:5.55in"></span></div><div class="foot-sign">Completed by <span class="wline inline" style="width:2.5in"></span> &nbsp;&nbsp;Verified by <span class="wline inline" style="width:2.5in"></span></div></div></div><!-- /pv:pars -->
+      </div>
+      <div class="way-in"><a class="btn" href="pars.html">Open Station Setup and Pars</a></div>
+    </section>
+
+    <section class="tool">
+      <h2>Operational Checks</h2>
+      <p class="tsub">Opening and closing lists, printed as run sheets &mdash;
+        a checkbox for every task.</p>
+      <div class="pv-frame">
+<!-- pv:run --><div class="sheet" style="--rh:53px;--fs:15.5px"><div class="sheet-head"><div><div class="sheet-title">Closing</div><div class="sheet-stamp">OPERATIONAL CHECKS</div></div><div class="sheet-meta">DATE <span class="wline inline" style="width:1.6in"></span><div class="sheet-legend">A dash instead of a check means see notes.</div></div></div><div class="cols"><div class="col"><table class="ptable"><thead><tr><th class="c-task">Task</th><th class="c-check"></th></tr></thead><tbody><tr><td class="item">Wipe down the line</td><td class="check"><span class="cbox"></span></td></tr><tr><td class="item">Wrap and date everything</td><td class="check"><span class="cbox"></span></td></tr><tr><td class="item">Dump the sanitizer buckets</td><td class="check"><span class="cbox"></span></td></tr></tbody></table></div><div class="col"><table class="ptable"><thead><tr><th class="c-task">Task</th><th class="c-check"></th></tr></thead><tbody><tr><td class="item">Take out the trash</td><td class="check"><span class="cbox"></span></td></tr><tr class="rule5"><td class="item">Sweep and mop the floors</td><td class="check"><span class="cbox"></span></td></tr><tr><td class="item">Turn off the hood fans</td><td class="check"><span class="cbox"></span></td></tr></tbody></table></div></div><div class="sheet-foot"><div class="foot-notes">NOTES: <span class="wline inline" style="width:6.1in"></span></div><div class="foot-sign">Completed by <span class="wline inline" style="width:2.5in"></span> &nbsp;&nbsp;Verified by <span class="wline inline" style="width:2.5in"></span></div></div></div><!-- /pv:run -->
+      </div>
+      <div class="way-in"><a class="btn" href="checklists.html">Open Operational Checks</a></div>
+    </section>
+
+    <section class="tool">
+      <h2>Cleaning and Maintenance Checks</h2>
+      <p class="tsub">Daily, weekly, and monthly cleaning on one grid &mdash;
+        an empty box means it didn&rsquo;t happen.</p>
+      <div class="pv-frame">
+<!-- pv:matrix --><div class="sheet" style="--rh:53px;--fs:15.5px"><div class="sheet-head"><div><div class="sheet-title">Daily cleaning</div><div class="sheet-stamp">CLEANING AND MAINTENANCE</div></div><div class="sheet-meta">WEEK OF <span class="wline inline" style="width:1.6in"></span><div class="sheet-legend">A dash instead of initials means see notes.</div></div></div><table class="ptable mtable"><thead><tr><th class="c-mtask">Task</th><th class="c-mcol" style="width:0.714in">MON</th><th class="c-mcol" style="width:0.714in">TUE</th><th class="c-mcol" style="width:0.714in">WED</th><th class="c-mcol" style="width:0.714in">THU</th><th class="c-mcol" style="width:0.714in">FRI</th><th class="c-mcol" style="width:0.714in">SAT</th><th class="c-mcol" style="width:0.714in">SUN</th></tr></thead><tbody><tr><td class="item">Filter the fryer oil</td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td></tr><tr><td class="item">Clean the slicer</td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td></tr><tr><td class="item">Sanitize the cutting boards</td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td></tr><tr><td class="item">Wipe down the reach-ins</td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td></tr><tr class="rule5"><td class="item">Sweep the walk-in</td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td></tr><tr><td class="item">Clean the can opener</td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td><td class="mcell"></td></tr></tbody></table><div class="sheet-foot"><div class="foot-notes">NOTES: <span class="wline inline" style="width:6.1in"></span></div><div class="foot-sign">Verified by <span class="wline inline" style="width:2.5in"></span></div></div></div><!-- /pv:matrix -->
+      </div>
+      <div class="way-in"><a class="btn" href="cleaning.html">Open Cleaning and Maintenance Checks</a></div>
+    </section>
+  </div>
+
+  <ul class="plain">
+    <li>No account, no sign-up, nothing to install.</li>
+    <li>Your lists stay on your device &mdash; nothing is sent anywhere.</li>
+    <li>Works on the computer you&rsquo;re on, prints from any browser.</li>
+  </ul>
+
+  <footer>
+    <span class="byline"><a href="https://studioamadeus.github.io/">Line Tools is built by Studio Amadeus</a> &mdash; so is <a href="https://boil.kitchen/">BOIL</a>, where systems live when a team outgrows paper.</span>
+    <span>Something broken or missing? <a href="mailto:support@boil.kitchen">Write to support@boil.kitchen</a></span>
+  </footer>
+</div>
+</body>
+</html>
